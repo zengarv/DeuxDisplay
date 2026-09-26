@@ -2,6 +2,7 @@ package io.github.zengarv.deuxdisplay
 
 import android.app.Activity
 import android.graphics.Color
+import android.text.InputType
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
@@ -17,16 +18,21 @@ import android.view.WindowManager
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.Spinner
 import android.widget.TextView
+import io.github.zengarv.deuxdisplay.protocol.Pairing
+import io.github.zengarv.deuxdisplay.protocol.PairingInfo
 import io.github.zengarv.deuxdisplay.stream.DisplayInfo
 import io.github.zengarv.deuxdisplay.stream.ModeOption
+import io.github.zengarv.deuxdisplay.stream.PairingStore
 import io.github.zengarv.deuxdisplay.stream.StreamClient
 import io.github.zengarv.deuxdisplay.stream.StreamMode
 import io.github.zengarv.deuxdisplay.stream.StreamModes
 import io.github.zengarv.deuxdisplay.stream.TouchInput
+import io.github.zengarv.deuxdisplay.stream.WifiLink
 
 class MainActivity : Activity(), SurfaceHolder.Callback {
 
@@ -34,6 +40,10 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
     private lateinit var settings: LinearLayout
     private lateinit var resolutionSpinner: Spinner
     private lateinit var refreshSpinner: Spinner
+    private lateinit var connectionSpinner: Spinner
+    private lateinit var pairingLabel: TextView
+    private lateinit var codeField: EditText
+    private lateinit var pairing: PairingStore
     private var client: StreamClient? = null
     private var surfaceHolder: SurfaceHolder? = null
 
@@ -41,6 +51,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
     private lateinit var modeOptions: List<ModeOption>
     private var refreshChoices: List<Int> = emptyList()
     private var mode = StreamMode()
+    private var useWifi = false
 
     private var streaming = false
     private var settingsOpened = false // opened over a running stream with Back
@@ -49,8 +60,10 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
+        pairing = PairingStore(this)
         modeOptions = StreamModes.options(this)
         mode = loadMode()
+        useWifi = wifiSupported && getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(KEY_WIFI, false)
         Log.i(TAG, "stream modes $modeOptions, selected $mode")
         applyPanelRefresh()
 
@@ -150,6 +163,12 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
 
     private fun startClient(holder: SurfaceHolder) {
         val hello = DisplayInfo.hello(this, mode)
+        val secrets = pairing.load()?.let { Pairing.derive(it.code) }
+        if (useWifi && secrets == null) {
+            showStatus(getString(R.string.status_not_paired))
+            return
+        }
+        val wifi = if (useWifi && secrets != null && wifiSupported) WifiLink(this, secrets) else null
         // adb shell am start -n io.github.zengarv.deuxdisplay/.MainActivity --ez debug_no_surface true
         // ... --es debug_decoder c2.android.avc.decoder   (force a specific decoder)
         val noSurface = intent.getBooleanExtra("debug_no_surface", false)
@@ -158,9 +177,31 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
             hello,
             holder.surface,
             ::showStatus,
+            wifi = wifi,
+            authKey = secrets?.authKey,
+            onPaired = ::onPaired,
             decodeWithoutSurface = noSurface,
             forcedDecoder = decoder,
         ).also { it.start() }
+    }
+
+    /** A USB session handed us the PC's pairing code: remember it for Wi-Fi. */
+    private fun onPaired(info: PairingInfo) {
+        val known = pairing.load()
+        if (known?.code == Pairing.normalize(info.code) && known?.hostName == info.hostName) return
+        if (pairing.save(info.code, info.hostName)) {
+            Log.i(TAG, "paired with ${info.hostName}")
+            runOnUiThread { updatePairingLabel() }
+        }
+    }
+
+    private fun updatePairingLabel() {
+        val paired = pairing.load()
+        pairingLabel.text = when {
+            paired == null -> getString(R.string.pairing_none)
+            paired.hostName.isEmpty() -> getString(R.string.pairing_code_entered)
+            else -> getString(R.string.pairing_host, paired.hostName)
+        }
     }
 
     private fun showStatus(text: String?) {
@@ -195,6 +236,26 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
             }
         }
 
+        val connectionLabels = listOf(getString(R.string.connection_usb)) +
+            if (wifiSupported) listOf(getString(R.string.connection_wifi)) else emptyList()
+        connectionSpinner = Spinner(this).apply {
+            adapter = spinnerAdapter(connectionLabels)
+            setSelection(if (useWifi) 1 else 0)
+        }
+        pairingLabel = TextView(this).apply {
+            setTextColor(Color.GRAY)
+        }
+        updatePairingLabel()
+        codeField = EditText(this).apply {
+            setHint(R.string.pairing_code_hint)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS or
+                InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            setSingleLine()
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.GRAY)
+            minWidth = dp(260)
+        }
+
         val apply = Button(this).apply {
             setText(R.string.setting_apply)
             setOnClickListener { applySettings() }
@@ -210,12 +271,17 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
             setPadding(dp(24), dp(16), dp(24), dp(16))
             addView(settingRow(R.string.setting_resolution, resolutionSpinner))
             addView(settingRow(R.string.setting_refresh, refreshSpinner))
+            addView(settingRow(R.string.setting_connection, connectionSpinner))
+            if (wifiSupported) {
+                addView(pairingLabel)
+                addView(codeField)
+            }
             addView(apply)
             addView(hint)
         }
     }
 
-    private fun settingRow(label: Int, spinner: Spinner): LinearLayout =
+    private fun settingRow(label: Int, spinner: View): LinearLayout =
         LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -250,14 +316,28 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
         modeOptions.indexOfFirst { it.width == m.width && it.height == m.height } + 1 // -1 -> 0 (Auto)
 
     private fun applySettings() {
+        val typed = codeField.text.toString()
+        var codeChanged = false
+        if (typed.isNotBlank()) {
+            if (Pairing.normalize(typed) == null) {
+                codeField.error = getString(R.string.pairing_code_invalid)
+                return
+            }
+            codeChanged = pairing.save(typed, "")
+            codeField.text.clear()
+            updatePairingLabel()
+        }
+
         val option = modeOptions.getOrNull(resolutionSpinner.selectedItemPosition - 1)
         val picked = StreamMode(option?.width ?: 0, option?.height ?: 0, selectedRefreshHz())
+        val pickedWifi = connectionSpinner.selectedItemPosition == 1
         settingsOpened = false
         updateSettingsVisibility()
-        if (picked == mode) return
+        if (picked == mode && pickedWifi == useWifi && !codeChanged) return
 
-        Log.i(TAG, "stream mode $mode -> $picked")
+        Log.i(TAG, "stream mode $mode -> $picked, wifi $useWifi -> $pickedWifi")
         mode = picked
+        useWifi = pickedWifi
         saveMode()
         applyPanelRefresh()
         // Reconnect with a new HELLO: the host unplugs the monitor and plugs one in the new mode.
@@ -292,6 +372,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
             .putInt(KEY_WIDTH, mode.width)
             .putInt(KEY_HEIGHT, mode.height)
             .putInt(KEY_REFRESH, mode.refreshHz)
+            .putBoolean(KEY_WIFI, useWifi)
             .apply()
     }
 
@@ -303,5 +384,9 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
         private const val KEY_WIDTH = "width"
         private const val KEY_HEIGHT = "height"
         private const val KEY_REFRESH = "refresh_hz"
+        private const val KEY_WIFI = "wifi"
+
+        /** Joining the PC's network needs WifiNetworkSpecifier (Android 10). */
+        private val wifiSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
     }
 }

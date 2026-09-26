@@ -6,16 +6,20 @@ import android.os.HandlerThread
 import android.os.Process
 import android.util.Log
 import android.view.Surface
+import io.github.zengarv.deuxdisplay.protocol.AuthResponse
 import io.github.zengarv.deuxdisplay.protocol.Codec
 import io.github.zengarv.deuxdisplay.protocol.Config
 import io.github.zengarv.deuxdisplay.protocol.FrameStats
 import io.github.zengarv.deuxdisplay.protocol.Header
 import io.github.zengarv.deuxdisplay.protocol.Hello
 import io.github.zengarv.deuxdisplay.protocol.MessageType
+import io.github.zengarv.deuxdisplay.protocol.Pairing
+import io.github.zengarv.deuxdisplay.protocol.PairingInfo
 import io.github.zengarv.deuxdisplay.protocol.Protocol
 import io.github.zengarv.deuxdisplay.protocol.ProtocolException
 import io.github.zengarv.deuxdisplay.protocol.Pong
 import io.github.zengarv.deuxdisplay.protocol.TouchContact
+import io.github.zengarv.deuxdisplay.protocol.parseFixed
 import io.github.zengarv.deuxdisplay.protocol.parsePing
 import io.github.zengarv.deuxdisplay.protocol.serializePing
 import io.github.zengarv.deuxdisplay.protocol.serializeTouchFrame
@@ -27,18 +31,27 @@ import java.net.InetSocketAddress
 import java.net.Socket
 
 /**
- * Connects to DeuxDisplayHost through `adb reverse` (127.0.0.1 on the device reaches the PC),
- * sends HELLO, and feeds the video stream into a [VideoDecoder] rendering to [surface].
- * Reconnects automatically until [stop] is called.
+ * Connects to DeuxDisplayHost, sends HELLO, and feeds the video stream into a [VideoDecoder]
+ * rendering to [surface]. Reconnects automatically until [stop] is called.
+ *
+ * Over USB it connects through `adb reverse` (127.0.0.1 on the device reaches the PC). With a
+ * [wifi] link it joins the PC's own Wi-Fi network instead and authenticates with [authKey]
+ * (docs/wire-protocol.md). The client owns [wifi] and closes it in [stop].
  */
 class StreamClient(
     private val hello: Hello,
     private val surface: Surface,
     private val listener: Listener,
     private val port: Int = DEFAULT_PORT,
+    private val wifi: WifiLink? = null,
+    private val authKey: ByteArray? = null,
+    private val onPaired: ((PairingInfo) -> Unit)? = null, // USB: the host sent its pairing code
     private val decodeWithoutSurface: Boolean = false, // latency experiment: nothing is displayed
     private val forcedDecoder: String? = null, // debug: MediaCodec component name to use
 ) {
+    /** The host closed a Wi-Fi session during authentication: the pairing code is wrong. */
+    private class RejectedException : Exception()
+
     fun interface Listener {
         /** A human-readable status, or null once video is streaming. Called on the network thread. */
         fun onStatus(status: String?)
@@ -81,6 +94,7 @@ class StreamClient(
         inputHandler = null
         inputThread?.quitSafely()
         inputThread = null
+        wifi?.close()
         try {
             socket?.close()
         } catch (e: IOException) {
@@ -93,26 +107,54 @@ class StreamClient(
     private fun run() {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY)
         while (running) {
-            listener.onStatus("Waiting for DeuxDisplay on your PC…\n(adb reverse tcp:$port tcp:$port)")
+            listener.onStatus(
+                if (wifi == null) {
+                    "Waiting for DeuxDisplay on your PC over USB…\n(adb reverse tcp:$port tcp:$port)"
+                } else {
+                    "Connecting over Wi-Fi (${wifi.ssid})…\nIs DeuxDisplayHost running on your PC?"
+                },
+            )
+            var retryDelayMs = RETRY_DELAY_MS
             try {
                 session()
             } catch (e: IOException) {
                 Log.i(TAG, "session ended: ${e.message}")
             } catch (e: ProtocolException) {
                 Log.w(TAG, "protocol error: ${e.message}")
+            } catch (e: RejectedException) {
+                Log.w(TAG, "host rejected the pairing code")
+                listener.onStatus("Your PC rejected this tablet's pairing code.\nConnect once over USB to pair again.")
+                retryDelayMs = REJECTED_RETRY_DELAY_MS
             }
-            if (running) Thread.sleep(RETRY_DELAY_MS)
+            if (running) {
+                try {
+                    Thread.sleep(retryDelayMs)
+                } catch (e: InterruptedException) {
+                    return
+                }
+            }
+        }
+    }
+
+    private fun connect(): Socket? {
+        val configure = { s: Socket ->
+            s.tcpNoDelay = true
+            s.receiveBufferSize = 4 shl 20 // before connecting, so the window scales
+        }
+        if (wifi != null) return wifi.connect(port, NETWORK_TIMEOUT_MS, CONNECT_TIMEOUT_MS, configure)
+        return Socket().also {
+            configure(it)
+            it.connect(InetSocketAddress("127.0.0.1", port), CONNECT_TIMEOUT_MS)
         }
     }
 
     private fun session() {
-        Socket().use { s ->
+        val connected = connect() ?: return
+        connected.use { s ->
             socket = s
-            s.tcpNoDelay = true
-            s.receiveBufferSize = 4 shl 20
-            s.connect(InetSocketAddress("127.0.0.1", port), CONNECT_TIMEOUT_MS)
             val input = DataInputStream(BufferedInputStream(s.getInputStream(), 1 shl 16))
             output = s.getOutputStream()
+            if (wifi != null) authenticate(input, authKey ?: throw RejectedException())
             send(MessageType.HELLO, 0, hello.serialize())
             Log.i(TAG, "connected, sent HELLO $hello")
 
@@ -170,6 +212,10 @@ class StreamClient(
                             val pong = Pong.parse(frameBuffer.copyOf(header.length))
                             clock.onPong(pong.pingTimestamp, receivedUs, header.timestamp)
                         }
+                        MessageType.PAIRING -> if (wifi == null) {
+                            val pairing = PairingInfo.parse(frameBuffer.copyOf(header.length))
+                            if (Pairing.normalize(pairing.code) != null) onPaired?.invoke(pairing)
+                        }
                         MessageType.BYE -> {
                             Log.i(TAG, "host said BYE")
                             return
@@ -184,6 +230,38 @@ class StreamClient(
                 socket = null
             }
         }
+    }
+
+    /** Wi-Fi handshake: prove we know the pairing code, then check that the host does too. */
+    private fun authenticate(input: DataInputStream, key: ByteArray) {
+        val challenge = readMessage(input)
+        if (challenge.type != MessageType.AUTH_CHALLENGE) throw ProtocolException("expected AUTH_CHALLENGE")
+        val hostNonce = parseFixed(frameBuffer.copyOf(challenge.length), Protocol.NONCE_SIZE)
+        val clientNonce = Pairing.nonce()
+        val mac = Pairing.clientMac(key, hostNonce, clientNonce)
+        send(MessageType.AUTH_RESPONSE, 0, AuthResponse(clientNonce, mac).serialize())
+
+        val reply = try {
+            readMessage(input)
+        } catch (e: IOException) {
+            throw RejectedException() // the host closes right after BYE
+        }
+        if (reply.type == MessageType.BYE) throw RejectedException()
+        val proof = parseFixed(frameBuffer.copyOf(reply.length), Protocol.MAC_SIZE)
+        if (reply.type != MessageType.AUTH_OK || !Pairing.macEquals(proof, Pairing.hostMac(key, clientNonce, hostNonce))) {
+            throw ProtocolException("host failed authentication")
+        }
+        Log.i(TAG, "authenticated over Wi-Fi")
+    }
+
+    /** Reads one message into [frameBuffer]. */
+    private fun readMessage(input: DataInputStream): Header {
+        val headerBytes = ByteArray(Protocol.HEADER_SIZE)
+        input.readFully(headerBytes)
+        val header = Header.decode(headerBytes)
+        if (header.length > frameBuffer.size) frameBuffer = ByteArray(Integer.highestOneBit(header.length) shl 1)
+        input.readFully(frameBuffer, 0, header.length)
+        return header
     }
 
     /** Pings the host periodically so [ClockSync] can map client timestamps onto the host clock. */
@@ -220,6 +298,8 @@ class StreamClient(
         const val DEFAULT_PORT = 27183
         private const val CONNECT_TIMEOUT_MS = 1000
         private const val RETRY_DELAY_MS = 1000L
+        private const val REJECTED_RETRY_DELAY_MS = 5000L
+        private const val NETWORK_TIMEOUT_MS = 35_000L
         private const val PING_INTERVAL_MS = 500L
     }
 }

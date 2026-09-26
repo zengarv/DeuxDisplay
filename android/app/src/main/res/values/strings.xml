@@ -9,4 +9,13 @@
     <string name="setting_hz">%1$d Hz</string>
     <string name="setting_apply">Apply</string>
     <string name="setting_hint">Press Back while streaming to change these.</string>
+    <string name="setting_connection">Connection</string>
+    <string name="connection_usb">USB</string>
+    <string name="connection_wifi">Wi-Fi (direct to PC)</string>
+    <string name="pairing_none">Wi-Fi: not paired. Connect once over USB, or type the code from DeuxDisplayHost --pair.</string>
+    <string name="pairing_host">Wi-Fi: paired with %1$s</string>
+    <string name="pairing_code_entered">Wi-Fi: paired with a typed code</string>
+    <string name="pairing_code_hint">Pairing code (XXXXX-XXXXX-XXXXX-XXXXX)</string>
+    <string name="pairing_code_invalid">20 characters: letters and digits 2–7</string>
+    <string name="status_not_paired">Wi-Fi isn\'t paired yet.\nConnect once over USB, or press Back and enter the pairing code.</string>
 </resources>
