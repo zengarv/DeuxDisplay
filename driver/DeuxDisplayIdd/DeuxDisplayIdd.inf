@@ -1,0 +1,76 @@
+;
+; DeuxDisplayIdd.inf - DeuxDisplay virtual monitor (IddCx indirect display driver)
+;
+; Derived from the IddCx sample in microsoft/Windows-driver-samples. MS-PL, see driver/LICENSE.
+;
+
+[Version]
+PnpLockDown=1
+Signature="$Windows NT$"
+ClassGUID={4D36E968-E325-11CE-BFC1-08002BE10318}
+Class=Display
+ClassVer=2.0
+Provider=%ManufacturerName%
+CatalogFile=DeuxDisplayIdd.cat
+DriverVer=
+
+[Manufacturer]
+%ManufacturerName%=Standard,NT$ARCH$.10.0...22000
+
+[Standard.NT$ARCH$.10.0...22000]
+; Root\DeuxDisplayIdd: root-enumerated install; DeuxDisplayIdd: software device created by the host
+%DeviceName%=DeuxDisplay_Install, Root\DeuxDisplayIdd
+%DeviceName%=DeuxDisplay_Install, DeuxDisplayIdd
+
+[SourceDisksFiles]
+DeuxDisplayIdd.dll=1
+
+[SourceDisksNames]
+1=%DiskName%
+
+; =================== UMDF Device ==================================
+
+[DeuxDisplay_Install.NT]
+Include=WUDFRD.inf
+Needs=WUDFRD.NT
+CopyFiles=UMDriverCopy
+
+[DeuxDisplay_Install.NT.hw]
+Include=WUDFRD.inf
+Needs=WUDFRD.NT.HW
+AddReg=DeuxDisplay_HardwareDeviceSettings
+
+[DeuxDisplay_HardwareDeviceSettings]
+HKR,, "UpperFilters", %REG_MULTI_SZ%, "IndirectKmd"
+; Dedicated UMDF host process so a driver fault can't take other drivers down with it
+HKR, "WUDF", "DeviceGroupId", %REG_SZ%, "DeuxDisplayIddGroup"
+
+[DeuxDisplay_Install.NT.Services]
+Include=WUDFRD.inf
+Needs=WUDFRD.NT.Services
+
+[DeuxDisplay_Install.NT.Wdf]
+UmdfService=DeuxDisplayIdd,DeuxDisplayIdd_Install
+UmdfServiceOrder=DeuxDisplayIdd
+UmdfKernelModeClientPolicy=AllowKernelModeClients
+
+[DeuxDisplayIdd_Install]
+UmdfLibraryVersion=$UMDFVERSION$
+ServiceBinary=%13%\DeuxDisplayIdd.dll
+UmdfExtensions=IddCx0102
+
+[DestinationDirs]
+UMDriverCopy=13
+
+[UMDriverCopy]
+DeuxDisplayIdd.dll
+
+; =================== Generic ==================================
+
+[Strings]
+ManufacturerName="DeuxDisplay"
+DiskName="DeuxDisplay Installation Disk"
+DeviceName="DeuxDisplay Virtual Monitor"
+
+REG_MULTI_SZ = 0x00010000
+REG_SZ       = 0x00000000

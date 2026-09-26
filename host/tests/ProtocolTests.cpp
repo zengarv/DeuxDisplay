@@ -1,24 +1,13 @@
+#include "Check.h"
+
 #include "../src/protocol/Protocol.h"
 
 #include <array>
-#include <cstdio>
 
 using namespace dd::protocol;
 
 namespace
 {
-
-int g_failures = 0;
-
-#define CHECK(expr)                                                                                          \
-    do                                                                                                       \
-    {                                                                                                        \
-        if (!(expr))                                                                                         \
-        {                                                                                                    \
-            std::fprintf(stderr, "%s:%d: CHECK failed: %s\n", __FILE__, __LINE__, #expr);                  \
-            ++g_failures;                                                                                    \
-        }                                                                                                    \
-    } while (0)
 
 void HeaderRoundTrip()
 {
@@ -113,19 +102,11 @@ void PingPongStatsRoundTrip()
 
 } // namespace
 
-int main()
+void RunProtocolTests()
 {
     HeaderRoundTrip();
     HeaderRejectsBadInput();
     HelloRoundTrip();
     ConfigRoundTrip();
     PingPongStatsRoundTrip();
-
-    if (g_failures != 0)
-    {
-        std::fprintf(stderr, "%d check(s) failed\n", g_failures);
-        return 1;
-    }
-    std::printf("All protocol tests passed\n");
-    return 0;
 }

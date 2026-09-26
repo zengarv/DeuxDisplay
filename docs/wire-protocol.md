@@ -72,6 +72,10 @@ Senders must write header and payload with a single write/send call (see latency
 
 If the host cannot serve the client (version/codec mismatch) it sends `BYE` instead.
 
+The host sends `CONFIG` again mid-session if the stream size or rate changes (e.g. the user
+switches the virtual display's mode). The client must reconfigure its decoder and wait for the
+next `CODEC_CONFIG` + keyframe.
+
 ### `VIDEO_FRAME` (host → client)
 
 Payload is one complete access unit in **Annex-B** format (start-code delimited NAL units).

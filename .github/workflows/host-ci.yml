@@ -3,9 +3,9 @@ name: host
 on:
   push:
     branches: [main]
-    paths: ["host/**", "DeuxDisplay.sln", ".github/workflows/host-ci.yml"]
+    paths: ["host/**", "driver/DeuxDisplayIdd/Edid.h", "DeuxDisplay.sln", ".github/workflows/host-ci.yml"]
   pull_request:
-    paths: ["host/**", "DeuxDisplay.sln", ".github/workflows/host-ci.yml"]
+    paths: ["host/**", "driver/DeuxDisplayIdd/Edid.h", "DeuxDisplay.sln", ".github/workflows/host-ci.yml"]
 
 permissions:
   contents: read
