@@ -19,7 +19,10 @@ std::wstring MonitorDeviceId(const wchar_t* outputDeviceName)
     return {};
 }
 
-bool FindVirtualOutput(LocatedOutput& result)
+namespace
+{
+
+template <typename Predicate> bool FindOutput(Predicate matches, LocatedOutput& result)
 {
     ComPtr<IDXGIFactory1> factory;
     if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))))
@@ -35,7 +38,7 @@ bool FindVirtualOutput(LocatedOutput& result)
         {
             DXGI_OUTPUT_DESC desc{};
             output->GetDesc(&desc);
-            if (desc.AttachedToDesktop && MonitorDeviceId(desc.DeviceName).find(kMonitorHardwareId) != std::wstring::npos)
+            if (desc.AttachedToDesktop && matches(desc))
             {
                 result.adapter = adapter;
                 result.deviceName = desc.DeviceName;
@@ -46,6 +49,23 @@ bool FindVirtualOutput(LocatedOutput& result)
         adapter.Reset();
     }
     return false;
+}
+
+} // namespace
+
+bool FindVirtualOutput(LocatedOutput& result)
+{
+    return FindOutput(
+        [](const DXGI_OUTPUT_DESC& desc) {
+            return MonitorDeviceId(desc.DeviceName).find(kMonitorHardwareId) != std::wstring::npos;
+        },
+        result);
+}
+
+bool FindOutputByName(const std::wstring& deviceName, LocatedOutput& result)
+{
+    return FindOutput([&](const DXGI_OUTPUT_DESC& desc) { return _wcsicmp(desc.DeviceName, deviceName.c_str()) == 0; },
+                      result);
 }
 
 } // namespace dd::capture

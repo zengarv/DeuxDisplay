@@ -4,6 +4,7 @@
 #include <mferror.h>
 #include <wrl/implements.h>
 
+#include "../common/Clock.h"
 #include "../common/Log.h"
 
 using Microsoft::WRL::ComPtr;
@@ -252,6 +253,8 @@ HRESULT MfH264Encoder::ConfigureCodecApi(const EncoderSettings& settings)
                                      eAVEncCommonRateControlMode_CBR)},
         {L"MeanBitRate", SetUint(m_codecApi.Get(), CODECAPI_AVEncCommonMeanBitRate, settings.bitrateKbps * 1000)},
         {L"BPictureCount", SetUint(m_codecApi.Get(), CODECAPI_AVEncMPVDefaultBPictureCount, 0)},
+        // 0 = fastest preset; latency matters more than the last few percent of compression.
+        {L"QualityVsSpeed", SetUint(m_codecApi.Get(), CODECAPI_AVEncCommonQualityVsSpeed, settings.qualityVsSpeed)},
         // Long GOP: TCP is lossless, so IDRs are only needed at start and on client request.
         {L"GOPSize", SetUint(m_codecApi.Get(), CODECAPI_AVEncMPVGOPSize, settings.fps * 60)},
     };
@@ -330,10 +333,13 @@ HRESULT MfH264Encoder::Encode(ID3D11Texture2D* nv12, uint64_t timestampUs, std::
         }
     }
 
+    const uint64_t waitStart = NowMicros();
     if (!WaitFor(m_needInput, 500))
     {
         return FAILED(m_error) ? m_error : HRESULT_FROM_WIN32(ERROR_TIMEOUT);
     }
+    const uint64_t inputReady = NowMicros();
+    m_timing.waitInputUs = inputReady - waitStart;
 
     ComPtr<IMFMediaBuffer> buffer;
     HRESULT hr = MFCreateDXGISurfaceBuffer(__uuidof(ID3D11Texture2D), nv12, 0, FALSE, &buffer);
@@ -369,8 +375,11 @@ HRESULT MfH264Encoder::Encode(ID3D11Texture2D* nv12, uint64_t timestampUs, std::
     // Low-latency mode yields one output per input; wait briefly for it.
     if (WaitFor(m_haveOutput, 100))
     {
-        return CollectOutput(out);
+        hr = CollectOutput(out);
+        m_timing.processingUs = NowMicros() - inputReady;
+        return hr;
     }
+    m_timing.processingUs = NowMicros() - inputReady;
     return FAILED(m_error) ? m_error : S_OK;
 }
 

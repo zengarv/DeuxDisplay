@@ -71,10 +71,20 @@ SplitAccessUnit SeparateParameterSets(std::span<const uint8_t> accessUnit)
 {
     SplitAccessUnit out;
     out.frame.reserve(accessUnit.size());
-    for (const Nal& nal : SplitH264(accessUnit))
+    const auto nals = SplitH264(accessUnit);
+
+    // Some encoders (Intel QSV) repeat a lone PPS on ordinary frames. Only a full SPS+PPS set is
+    // worth a CODEC_CONFIG message; a lone PPS stays inline, which decoders handle fine.
+    bool hasSps = false;
+    for (const Nal& nal : nals)
+    {
+        hasSps = hasSps || nal.type == kNalSps;
+    }
+
+    for (const Nal& nal : nals)
     {
         const auto bytes = accessUnit.subspan(nal.offset, nal.size);
-        if (nal.type == kNalSps || nal.type == kNalPps)
+        if (hasSps && (nal.type == kNalSps || nal.type == kNalPps))
         {
             out.codecConfig.insert(out.codecConfig.end(), bytes.begin(), bytes.end());
         }

@@ -44,16 +44,22 @@ Input passthrough is the stretch milestone M5.
 - [x] Builds via WDK NuGet packages + VS WDK component (64-bit MSBuild); compile-only CI job
 - [x] Install (local cert + pnputil) and uninstall scripts
 - [x] Host `--create-display` (software device) to attach/detach the monitor
+- [x] Driver package installs (local cert, `pnputil`), verified on the dev PC
+- [ ] **No admin at runtime:** `SwDeviceCreate` needs admin (E_ACCESSDENIED). Instead create a
+      persistent device once at install time, have the driver register a device interface, and
+      let the (non-admin) host plug/unplug the monitor via IOCTL, unplugging automatically when
+      the host's handle closes
 - [ ] **Acceptance:** monitor appears in Display Settings at native resolution; windows can be dragged onto it
 
 ### M2 — Capture → encode → dummy receiver
 - [x] Protocol (de)serialisation + unit tests (host C++ and Android Kotlin, shared test vector)
 - [x] Desktop Duplication of the virtual output (matched by monitor ID `DXD0001`), `ACCESS_LOST` recovery
 - [x] GPU cursor overlay (DDA frames exclude the pointer) + BGRA→NV12 via D3D11 video processor
-- [x] MF hardware H.264 encoder, low-latency configuration (compiles; needs hardware run)
+- [x] MF hardware H.264 encoder, low-latency configuration (Intel Quick Sync verified)
 - [x] Loopback TCP server, `--serve` session loop, SPS/PPS split into `CODEC_CONFIG`
-- [ ] `tools/dump_receiver.py`: speaks the protocol, writes `.h264` playable by ffplay/VLC
-- [ ] **Acceptance:** recorded stream plays back correctly
+- [x] `tools/dump_receiver.py`: speaks the protocol, writes `.h264`, reports capture→receive latency
+- [x] `--output \\.\DISPLAYn` debug mode to test the pipeline on a physical monitor without the driver
+- [x] **Acceptance:** recorded stream plays back correctly (ffprobe: 146/146 frames, cursor visible)
 
 ### M3 — Live video on the tablet
 - [ ] Android protocol client + MediaCodec low-latency decode to Surface

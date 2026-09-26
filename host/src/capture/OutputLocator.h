@@ -22,6 +22,10 @@ inline constexpr wchar_t kMonitorHardwareId[] = L"DXD0001";
 // Returns false if the virtual monitor is not currently attached.
 bool FindVirtualOutput(LocatedOutput& result);
 
+// Finds an output by GDI device name (e.g. \\.\DISPLAY1). For testing the pipeline on a
+// physical monitor without the driver.
+bool FindOutputByName(const std::wstring& deviceName, LocatedOutput& result);
+
 // For diagnostics: the monitor device ID of an output, e.g. MONITOR\DXD0001\{...}\0003.
 std::wstring MonitorDeviceId(const wchar_t* outputDeviceName);
 

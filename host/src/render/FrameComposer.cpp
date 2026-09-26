@@ -298,6 +298,8 @@ HRESULT FrameComposer::ConvertLast(ID3D11Texture2D** nv12)
     {
         return hr;
     }
+    // Kick the batched copy/convert to the GPU now instead of whenever D3D decides to.
+    m_context->Flush();
     *nv12 = m_nv12[slot].Get();
     (*nv12)->AddRef();
     return S_OK;

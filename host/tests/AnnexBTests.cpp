@@ -45,6 +45,18 @@ void NonKeyframe()
     CHECK(split.frame == au);
 }
 
+void LonePpsStaysInline()
+{
+    // Intel QSV pattern on non-IDR frames: PPS, AUD, slice.
+    const std::vector<uint8_t> au = {0x00, 0x00, 0x00, 0x01, 0x68, 0xCE, 0x3C, 0x80,
+                                     0x00, 0x00, 0x00, 0x01, 0x09, 0x30,
+                                     0x00, 0x00, 0x00, 0x01, 0x41, 0x9A, 0x02};
+    const auto split = SeparateParameterSets(au);
+    CHECK(split.codecConfig.empty());
+    CHECK(split.frame == au);
+    CHECK(!split.keyframe);
+}
+
 void EmptyAndGarbage()
 {
     CHECK(SplitH264({}).empty());
@@ -59,5 +71,6 @@ void RunAnnexBTests()
     SplitsMixedStartCodes();
     SeparatesParameterSets();
     NonKeyframe();
+    LonePpsStaysInline();
     EmptyAndGarbage();
 }
