@@ -27,7 +27,7 @@ msbuild DeuxDisplay.sln /p:Configuration=Release /p:Platform=x64 /m /nodeReuse:f
 host\x64\Release\DeuxDisplayHostTests.exe
 host\x64\Release\DeuxDisplayHost.exe --list-outputs
 host\x64\Release\DeuxDisplayHost.exe --create-display   # needs the driver installed
-scriptsinstall-autostart.ps1   # background agent: plug in the tablet (app open) -> monitor
+scripts\install-autostart.ps1  # background agent: plug in the tablet (app open) -> monitor
 
 # Driver (WDK from NuGet), then install from an elevated shell
 msbuild driver\DeuxDisplayIdd.sln /t:restore /p:RestorePackagesConfig=true
