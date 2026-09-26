@@ -22,6 +22,13 @@ struct EncoderSettings
     UINT height = 0;
     UINT fps = 60;
     UINT bitrateKbps = 30000;
+    UINT qualityVsSpeed = 0; // CODECAPI_AVEncCommonQualityVsSpeed: 0 fastest .. 100 best quality
+};
+
+struct EncoderTiming
+{
+    uint64_t waitInputUs = 0;  // waiting for METransformNeedInput
+    uint64_t processingUs = 0; // ProcessInput -> output collected
 };
 
 struct EncodedFrame
@@ -53,6 +60,7 @@ class MfH264Encoder
     HRESULT Encode(ID3D11Texture2D* nv12, uint64_t timestampUs, std::vector<EncodedFrame>& out);
 
     const std::wstring& Name() const { return m_name; }
+    const EncoderTiming& LastTiming() const { return m_timing; }
 
   private:
     friend class EventPump;
@@ -69,6 +77,7 @@ class MfH264Encoder
     Microsoft::WRL::ComPtr<EventPump> m_pump;
     std::wstring m_name;
     UINT m_fps = 60;
+    EncoderTiming m_timing;
     bool m_forceKeyframe = true;
     bool m_started = false;
     bool m_mfStarted = false;

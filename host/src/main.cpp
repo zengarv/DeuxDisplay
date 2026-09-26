@@ -84,6 +84,7 @@ void PrintUsage()
                  L"Usage:\n"
                  L"  DeuxDisplayHost --serve [--port N] [--bitrate KBPS] [--no-create-display]\n"
                  L"      Attach the virtual monitor and stream it to a client on 127.0.0.1:N (default 27183)\n"
+                 L"      --output \\\\.\\DISPLAYn streams an existing monitor instead (debugging, no driver)\n"
                  L"  DeuxDisplayHost --list-outputs     List DXGI adapters and outputs\n"
                  L"  DeuxDisplayHost --create-display   Attach the virtual monitor until Enter is pressed\n");
 }
@@ -104,6 +105,10 @@ bool ParseServeOptions(int argc, wchar_t** argv, dd::ServeOptions& options)
         else if (arg == L"--no-create-display")
         {
             options.createDisplay = false;
+        }
+        else if (arg == L"--output" && i + 1 < argc)
+        {
+            options.outputName = argv[++i];
         }
         else
         {

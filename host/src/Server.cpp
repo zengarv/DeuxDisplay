@@ -34,11 +34,14 @@ struct Pipeline
     UINT height = 0;
     UINT fps = 60;
 
-    HRESULT Initialize(unsigned bitrateKbps)
+    HRESULT Initialize(const ServeOptions& options)
     {
+        const unsigned bitrateKbps = options.bitrateKbps;
         encoder.Shutdown();
         device.Reset();
-        if (!capture::FindVirtualOutput(output))
+        const bool found = options.outputName.empty() ? capture::FindVirtualOutput(output)
+                                                      : capture::FindOutputByName(options.outputName, output);
+        if (!found)
         {
             return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
         }
@@ -93,18 +96,39 @@ bool SendConfig(transport::Connection& conn, const Pipeline& p, unsigned bitrate
     return conn.Send(MessageType::Config, 0, NowMicros(), payload);
 }
 
+// Per-frame timestamps (host clock, µs) used to break latency down by stage.
+struct FrameTimes
+{
+    uint64_t present = 0;  // DWM presented the frame (DDA LastPresentTime)
+    uint64_t acquired = 0; // AcquireNextFrame returned
+    uint64_t encodeStart = 0;
+    uint64_t encoded = 0; // encoder output available
+};
+
 struct SessionStats
 {
     uint64_t windowStartUs = 0;
     unsigned frames = 0;
     uint64_t bytes = 0;
     uint64_t pipelineUs = 0;
+    uint64_t waitAcquireUs = 0;
+    uint64_t composeUs = 0;
+    uint64_t encodeUs = 0;
+    uint64_t sendUs = 0;
+    uint64_t encoderWaitUs = 0;
+    uint64_t encoderProcessUs = 0;
 
-    void Add(size_t size, uint64_t processingUs)
+    void Add(size_t size, const FrameTimes& t, uint64_t sent, const encode::EncoderTiming& et)
     {
+        encoderWaitUs += et.waitInputUs;
+        encoderProcessUs += et.processingUs;
         ++frames;
         bytes += size;
-        pipelineUs += processingUs;
+        pipelineUs += sent - t.present;
+        waitAcquireUs += t.acquired - t.present;
+        composeUs += t.encodeStart - t.acquired;
+        encodeUs += t.encoded - t.encodeStart;
+        sendUs += sent - t.encoded;
     }
 
     void MaybeLog()
@@ -121,8 +145,11 @@ struct SessionStats
         }
         if (frames > 0)
         {
-            Log(L"stream: %.1f fps, %.1f Mbit/s, capture->sent %.2f ms avg", frames * 1e6 / elapsed,
-                bytes * 8.0 / elapsed, pipelineUs / 1000.0 / frames);
+            const double n = frames * 1000.0;
+            Log(L"stream: %.1f fps, %.1f Mbit/s | present->sent %.2f ms = acquire %.2f + compose %.2f + "
+                L"encode %.2f (wait-input %.2f, process %.2f) + send %.2f",
+                frames * 1e6 / elapsed, bytes * 8.0 / elapsed, pipelineUs / n, waitAcquireUs / n, composeUs / n,
+                encodeUs / n, encoderWaitUs / n, encoderProcessUs / n, sendUs / n);
         }
         *this = {};
         windowStartUs = now;
@@ -149,7 +176,7 @@ void RunSession(transport::Connection& conn, const ServeOptions& options)
         hello->heightPx, hello->refreshMilliHz / 1000.0, hello->densityDpi);
 
     Pipeline pipeline;
-    HRESULT hr = pipeline.Initialize(options.bitrateKbps);
+    HRESULT hr = pipeline.Initialize(options);
     if (FAILED(hr))
     {
         Log(L"session: pipeline init failed 0x%08lX", Hr(hr));
@@ -195,6 +222,7 @@ void RunSession(transport::Connection& conn, const ServeOptions& options)
     std::vector<encode::EncodedFrame> encoded;
     bool haveFrame = false;
 
+    FrameTimes times;
     auto sendEncoded = [&](const encode::EncodedFrame& frame) {
         auto split = annexb::SeparateParameterSets(frame.data);
         if (!split.codecConfig.empty() && split.codecConfig != lastCodecConfig)
@@ -211,7 +239,10 @@ void RunSession(transport::Connection& conn, const ServeOptions& options)
         {
             return false;
         }
-        stats.Add(split.frame.size(), NowMicros() - frame.timestampUs);
+        if (frame.timestampUs == times.present)
+        {
+            stats.Add(split.frame.size(), times, NowMicros(), pipeline.encoder.LastTiming());
+        }
         return true;
     };
 
@@ -252,7 +283,7 @@ void RunSession(transport::Connection& conn, const ServeOptions& options)
             const UINT oldWidth = pipeline.width;
             const UINT oldHeight = pipeline.height;
             const UINT oldFps = pipeline.fps;
-            while (!stop && FAILED(pipeline.Initialize(options.bitrateKbps)))
+            while (!stop && FAILED(pipeline.Initialize(options)))
             {
                 Sleep(250);
             }
@@ -272,7 +303,8 @@ void RunSession(transport::Connection& conn, const ServeOptions& options)
             continue;
         }
 
-        const uint64_t captureUs = frame.presentQpc ? QpcToMicros(frame.presentQpc) : NowMicros();
+        times.acquired = NowMicros();
+        times.present = frame.presentQpc ? QpcToMicros(frame.presentQpc) : times.acquired;
         ComPtr<ID3D11Texture2D> nv12;
         hr = pipeline.composer.Compose(frame.desktop, pipeline.duplicator.Pointer(), &nv12);
         pipeline.duplicator.ReleaseFrame();
@@ -283,7 +315,9 @@ void RunSession(transport::Connection& conn, const ServeOptions& options)
         }
         haveFrame = true;
 
-        hr = pipeline.encoder.Encode(nv12.Get(), captureUs, encoded);
+        times.encodeStart = NowMicros();
+        hr = pipeline.encoder.Encode(nv12.Get(), times.present, encoded);
+        times.encoded = NowMicros();
         if (FAILED(hr))
         {
             Log(L"encode failed 0x%08lX", Hr(hr));
@@ -318,29 +352,40 @@ int Serve(const ServeOptions& options)
     }
 
     VirtualDisplay display;
-    if (options.createDisplay)
+    capture::LocatedOutput output;
+    if (!options.outputName.empty())
     {
-        HRESULT hr = display.Create();
-        if (FAILED(hr))
+        if (!capture::FindOutputByName(options.outputName, output))
         {
-            Log(L"Creating the virtual display failed 0x%08lX. Is the driver installed? See driver/README.md.",
-                Hr(hr));
+            Log(L"output %s not found (see --list-outputs)", options.outputName.c_str());
             return 1;
         }
+        Log(L"debug: streaming existing output %s", output.deviceName.c_str());
     }
-
-    capture::LocatedOutput output;
-    for (int i = 0; i < 50 && !capture::FindVirtualOutput(output); ++i)
+    else
     {
-        Sleep(200);
+        if (options.createDisplay)
+        {
+            HRESULT hr = display.Create();
+            if (FAILED(hr))
+            {
+                Log(L"Creating the virtual display failed 0x%08lX. Is the driver installed? See driver/README.md.",
+                    Hr(hr));
+                return 1;
+            }
+        }
+        for (int i = 0; i < 50 && !capture::FindVirtualOutput(output); ++i)
+        {
+            Sleep(200);
+        }
+        if (!output.output)
+        {
+            Log(L"The DeuxDisplay monitor did not appear (looking for %s). Is it enabled in Display Settings?",
+                capture::kMonitorHardwareId);
+            return 1;
+        }
+        Log(L"virtual monitor: %s", output.deviceName.c_str());
     }
-    if (!output.output)
-    {
-        Log(L"The DeuxDisplay monitor did not appear (looking for %s). Is it enabled in Display Settings?",
-            capture::kMonitorHardwareId);
-        return 1;
-    }
-    Log(L"virtual monitor: %s", output.deviceName.c_str());
 
     transport::Listener listener;
     if (!listener.Listen(options.port))
