@@ -1,5 +1,8 @@
 #include "Server.h"
 
+#include <winsock2.h>
+#include <ws2tcpip.h>
+
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -13,8 +16,15 @@
 #include "encode/AnnexB.h"
 #include "encode/MfH264Encoder.h"
 #include "input/TouchInjector.h"
+#include "protocol/Pairing.h"
 #include "render/FrameComposer.h"
 #include "transport/Tcp.h"
+#include "wireless/PairingStore.h"
+#include "wireless/WifiDirectAp.h"
+#include "wireless/WlanTuning.h"
+
+#include <optional>
+#include <string>
 
 using Microsoft::WRL::ComPtr;
 
@@ -24,6 +34,25 @@ namespace
 {
 
 using protocol::MessageType;
+
+enum class Transport
+{
+    Usb,
+    Wifi,
+};
+
+const wchar_t* TransportName(Transport transport)
+{
+    return transport == Transport::Wifi ? L"Wi-Fi" : L"USB";
+}
+
+// The host's pairing code and what it derives (docs/wire-protocol.md, "Pairing").
+struct PairingContext
+{
+    std::string code; // normalized
+    protocol::PairingSecrets secrets;
+    std::string hostName;
+};
 
 // Everything that has to be rebuilt when the display mode changes or the GPU is reset.
 struct Pipeline
@@ -365,8 +394,50 @@ struct ClientStats
     }
 };
 
-void RunSession(transport::Connection& conn, const ServeOptions& serveOptions, VirtualDisplay& display)
+// Wi-Fi handshake: the client proves it knows the pairing code, then the host does.
+bool Authenticate(transport::Connection& conn, const protocol::AuthKey& key)
 {
+    protocol::Nonce hostNonce{};
+    if (!protocol::RandomNonce(hostNonce) ||
+        !conn.Send(MessageType::AuthChallenge, 0, NowMicros(), protocol::SerializeNonce(hostNonce)))
+    {
+        return false;
+    }
+
+    protocol::Header header;
+    std::vector<uint8_t> payload;
+    conn.SetReceiveTimeout(5000);
+    const bool received = conn.Receive(header, payload);
+    conn.SetReceiveTimeout(0);
+    const auto response = received && header.type == MessageType::AuthResponse
+                              ? protocol::ParseAuthResponse(payload)
+                              : std::nullopt;
+    if (!response ||
+        !protocol::MacEquals(response->mac, protocol::ClientAuthMac(key, hostNonce, response->clientNonce)))
+    {
+        Log(L"session: Wi-Fi client failed authentication (wrong pairing code, or no response in 5 s)");
+        conn.Send(MessageType::Bye, 0, NowMicros(), {});
+        return false;
+    }
+    const auto proof = protocol::HostAuthMac(key, response->clientNonce, hostNonce);
+    return conn.Send(MessageType::AuthOk, 0, NowMicros(), protocol::SerializeMac(proof));
+}
+
+void RunSession(transport::Connection& conn, Transport transport, const PairingContext* pairing,
+                const ServeOptions& serveOptions, VirtualDisplay& display)
+{
+    // Held for the whole Wi-Fi session: keeps the PC's radio awake and on-channel.
+    std::optional<wireless::WlanTuning> wlanTuning;
+    if (transport == Transport::Wifi)
+    {
+        if (!pairing || !Authenticate(conn, pairing->secrets.authKey))
+        {
+            return;
+        }
+        wlanTuning.emplace();
+        conn.EnableWifiQos();
+    }
+
     protocol::Header header;
     std::vector<uint8_t> payload;
     if (!conn.Receive(header, payload) || header.type != MessageType::Hello)
@@ -381,8 +452,9 @@ void RunSession(transport::Connection& conn, const ServeOptions& serveOptions, V
         conn.Send(MessageType::Bye, 0, NowMicros(), {});
         return;
     }
-    Log(L"session: client \"%S\" %ux%u @ %.1f Hz, %u dpi", hello->deviceName.c_str(), hello->widthPx,
-        hello->heightPx, hello->refreshMilliHz / 1000.0, hello->densityDpi);
+    Log(L"session: client \"%S\" over %s, %ux%u @ %.1f Hz, %u dpi", hello->deviceName.c_str(),
+        TransportName(transport), hello->widthPx, hello->heightPx, hello->refreshMilliHz / 1000.0,
+        hello->densityDpi);
 
     // A mode picked on the client wins over the command-line limits: stream exactly that.
     ServeOptions options = serveOptions;
@@ -455,6 +527,16 @@ void RunSession(transport::Connection& conn, const ServeOptions& serveOptions, V
     if (!SendConfig(conn, pipeline, options.bitrateKbps))
     {
         return;
+    }
+    if (transport == Transport::Usb && pairing)
+    {
+        // USB is the trusted channel: hand over the code the client needs for Wi-Fi.
+        const auto message =
+            protocol::SerializePairing({protocol::FormatPairingCode(pairing->code), pairing->hostName});
+        if (!conn.Send(MessageType::Pairing, 0, NowMicros(), message))
+        {
+            return;
+        }
     }
 
     // Declared before the reader thread, which injects into it; lifts all contacts on exit.
@@ -685,23 +767,133 @@ int Serve(const ServeOptions& options)
         Log(L"debug: streaming existing output %s", output.deviceName.c_str());
     }
 
-    transport::Listener listener;
-    if (!listener.Listen(options.port))
+    std::optional<PairingContext> pairing;
+    if (auto code = wireless::LoadOrCreatePairingCode())
+    {
+        if (auto secrets = protocol::DerivePairingSecrets(*code))
+        {
+            pairing = PairingContext{*code, *secrets, wireless::ComputerNameUtf8()};
+        }
+    }
+    if (!pairing)
+    {
+        Log(L"pairing: no pairing code available, Wi-Fi disabled");
+        if (!options.usb)
+        {
+            return 1;
+        }
+    }
+
+    transport::Listener usbListener;
+    if (options.usb && !usbListener.Listen(options.port))
     {
         Log(L"listen on 127.0.0.1:%u failed (%d)", options.port, WSAGetLastError());
         return 1;
     }
 
+    wireless::WifiDirectAp accessPoint;
+    transport::Listener wifiListener;
+    std::wstring wifiEndpoint;
+    auto startWifi = [&] {
+        wifiListener.Close();
+        const std::wstring ssid(pairing->secrets.ssid.begin(), pairing->secrets.ssid.end());
+        const std::wstring passphrase(pairing->secrets.passphrase.begin(), pairing->secrets.passphrase.end());
+        HRESULT hr = accessPoint.Start(ssid, passphrase);
+        if (FAILED(hr))
+        {
+            Log(L"wifi: can't start the access point (0x%08lX). Is Wi-Fi on and Mobile Hotspot off?", Hr(hr));
+            return false;
+        }
+        in_addr address{};
+        if (!wireless::WifiDirectAp::WaitForAddress(10000, address))
+        {
+            Log(L"wifi: the access point got no IPv4 address");
+            accessPoint.Stop();
+            return false;
+        }
+        if (!wifiListener.Listen(options.port, address))
+        {
+            Log(L"wifi: listen failed (%d)", WSAGetLastError());
+            accessPoint.Stop();
+            return false;
+        }
+        wchar_t text[INET_ADDRSTRLEN] = {};
+        InetNtopW(AF_INET, &address, text, INET_ADDRSTRLEN);
+        wifiEndpoint = std::wstring(text) + L":" + std::to_wstring(options.port);
+        Log(L"wifi: network \"%s\" is up. Pair a tablet once over USB, or type the code from --pair.",
+            ssid.c_str());
+        return true;
+    };
+    if (options.wifi && pairing && !startWifi() && !options.usb)
+    {
+        return 1;
+    }
+
+    bool announce = true;
     for (;;)
     {
-        Log(L"waiting for client on 127.0.0.1:%u", options.port);
-        auto conn = listener.Accept();
+        if (announce)
+        {
+            std::wstring where;
+            if (usbListener.Handle() != INVALID_SOCKET)
+            {
+                where = L"USB (127.0.0.1:" + std::to_wstring(options.port) + L")";
+            }
+            if (wifiListener.Handle() != INVALID_SOCKET)
+            {
+                where += (where.empty() ? L"Wi-Fi (" : L" or Wi-Fi (") + wifiEndpoint + L")";
+            }
+            Log(L"waiting for a client on %s", where.c_str());
+            announce = false;
+        }
+
+        fd_set readable;
+        FD_ZERO(&readable);
+        if (usbListener.Handle() != INVALID_SOCKET)
+        {
+            FD_SET(usbListener.Handle(), &readable);
+        }
+        if (wifiListener.Handle() != INVALID_SOCKET)
+        {
+            FD_SET(wifiListener.Handle(), &readable);
+        }
+
+        int ready = 0;
+        if (readable.fd_count > 0)
+        {
+            timeval timeout{2, 0};
+            ready = select(0, &readable, nullptr, nullptr, &timeout);
+            if (ready == SOCKET_ERROR)
+            {
+                Log(L"select failed (%d)", WSAGetLastError());
+                return 1;
+            }
+        }
+        else
+        {
+            Sleep(2000); // Wi-Fi only, and the network is down: retried below
+        }
+
+        if (ready == 0)
+        {
+            if (options.wifi && pairing && !accessPoint.Running())
+            {
+                Log(L"wifi: access point down, restarting it");
+                announce = startWifi();
+            }
+            continue;
+        }
+
+        const bool fromUsb = usbListener.Handle() != INVALID_SOCKET && FD_ISSET(usbListener.Handle(), &readable);
+        auto conn = fromUsb ? usbListener.Accept() : wifiListener.Accept();
         if (!conn)
         {
             Log(L"accept failed (%d)", WSAGetLastError());
-            return 1;
+            continue;
         }
-        RunSession(*conn, options, display);
+        RunSession(*conn, fromUsb ? Transport::Usb : Transport::Wifi, pairing ? &*pairing : nullptr, options,
+                   display);
+        announce = true;
     }
 }
 

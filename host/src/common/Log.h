@@ -4,6 +4,7 @@
 
 #include <cstdarg>
 #include <cstdio>
+#include <cwchar>
 
 namespace dd
 {

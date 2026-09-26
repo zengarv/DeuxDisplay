@@ -5,6 +5,8 @@
 #include "Server.h"
 #include "capture/OutputLocator.h"
 #include "display/VirtualDisplay.h"
+#include "protocol/Pairing.h"
+#include "wireless/PairingStore.h"
 
 #include <cstdlib>
 
@@ -105,19 +107,40 @@ int DeviceCommand(bool install)
     return 0;
 }
 
+int PairCommand(bool reset)
+{
+    const auto code = dd::wireless::LoadOrCreatePairingCode(reset);
+    const auto secrets = code ? dd::protocol::DerivePairingSecrets(*code) : std::nullopt;
+    if (!secrets)
+    {
+        std::fwprintf(stderr, L"Couldn't load or create the pairing code.\n");
+        return 1;
+    }
+    std::wprintf(L"Pairing code: %S\n"
+                 L"Wi-Fi network: %S (started by --serve)\n\n"
+                 L"Tablets pair automatically over USB. Otherwise, open DeuxDisplay on the tablet, press Back,\n"
+                 L"pick Connection > Wi-Fi and enter this code. Anyone with the code can connect: keep it private,\n"
+                 L"and run --pair --reset to replace it (unpairs every tablet).\n",
+                 dd::protocol::FormatPairingCode(*code).c_str(), secrets->ssid.c_str());
+    return 0;
+}
+
 void PrintUsage()
 {
     std::wprintf(L"DeuxDisplayHost\n\n"
                  L"Usage:\n"
                  L"  DeuxDisplayHost --serve [--port N] [--bitrate KBPS] [--max-fps N] [--max-stream-size WxH]\n"
                  L"                          [--codec auto|h264|hevc] [--repeat-frames] [--no-touch]\n"
-                 L"                          [--output \\\\.\\DISPLAYn]\n"
-                 L"      Stream to a client on 127.0.0.1:N (default 27183), plugging a virtual monitor that\n"
-                 L"      matches the client. --output streams an existing monitor instead (debugging).\n"
+                 L"                          [--transport both|usb|wifi] [--output \\\\.\\DISPLAYn]\n"
+                 L"      Stream to a client, plugging a virtual monitor that matches the client. Clients connect\n"
+                 L"      over USB (127.0.0.1:N through adb reverse, default port 27183) or over Wi-Fi (a private\n"
+                 L"      network this PC starts; paired tablets only). --output streams an existing monitor\n"
+                 L"      instead (debugging).\n"
                  L"      A resolution/frame rate picked in the tablet app overrides --max-stream-size/--max-fps.\n"
                  L"      Touches on the tablet are injected on the display unless --no-touch is given.\n"
                  L"  DeuxDisplayHost --create-display [SECONDS]\n"
                  L"      Plug a 2408x1720 virtual monitor until Enter is pressed (or for SECONDS)\n"
+                 L"  DeuxDisplayHost --pair [--reset]   Show (or replace) the Wi-Fi pairing code\n"
                  L"  DeuxDisplayHost --list-outputs     List DXGI adapters and outputs\n"
                  L"  DeuxDisplayHost --install-device   (admin, once) create the persistent virtual display device\n"
                  L"  DeuxDisplayHost --remove-device    (admin) remove it\n");
@@ -166,6 +189,16 @@ bool ParseServeOptions(int argc, wchar_t** argv, dd::ServeOptions& options)
         {
             options.maxFps = std::wcstoul(argv[++i], nullptr, 10);
         }
+        else if (arg == L"--transport" && i + 1 < argc)
+        {
+            const std::wstring_view transport = argv[++i];
+            options.usb = transport == L"both" || transport == L"usb";
+            options.wifi = transport == L"both" || transport == L"wifi";
+            if (!options.usb && !options.wifi)
+            {
+                return false;
+            }
+        }
         else if (arg == L"--output" && i + 1 < argc)
         {
             options.outputName = argv[++i];
@@ -200,6 +233,10 @@ int wmain(int argc, wchar_t** argv)
     if (command == L"--install-device" || command == L"--remove-device")
     {
         return DeviceCommand(command == L"--install-device");
+    }
+    if (command == L"--pair")
+    {
+        return PairCommand(argc >= 3 && std::wstring_view(argv[2]) == L"--reset");
     }
     if (command == L"--serve")
     {

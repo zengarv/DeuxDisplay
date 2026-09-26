@@ -37,7 +37,7 @@
       <AdditionalIncludeDirectories>$(IntDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>dxgi.lib;d3d11.lib;mfplat.lib;mfuuid.lib;mf.lib;ws2_32.lib;swdevice.lib;cfgmgr32.lib;bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>dxgi.lib;d3d11.lib;mfplat.lib;mfuuid.lib;mf.lib;ws2_32.lib;swdevice.lib;cfgmgr32.lib;bcrypt.lib;crypt32.lib;iphlpapi.lib;qwave.lib;runtimeobject.lib;wlanapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <FxCompile>
       <ShaderModel>4.0</ShaderModel>
@@ -62,6 +62,9 @@
     <ClCompile Include="src\protocol\Protocol.cpp" />
     <ClCompile Include="src\render\FrameComposer.cpp" />
     <ClCompile Include="src\transport\Tcp.cpp" />
+    <ClCompile Include="src\wireless\PairingStore.cpp" />
+    <ClCompile Include="src\wireless\WifiDirectAp.cpp" />
+    <ClCompile Include="src\wireless\WlanTuning.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\Server.h" />
@@ -79,6 +82,9 @@
     <ClInclude Include="src\protocol\Protocol.h" />
     <ClInclude Include="src\render\FrameComposer.h" />
     <ClInclude Include="src\transport\Tcp.h" />
+    <ClInclude Include="src\wireless\PairingStore.h" />
+    <ClInclude Include="src\wireless\WifiDirectAp.h" />
+    <ClInclude Include="src\wireless\WlanTuning.h" />
   </ItemGroup>
   <ItemGroup>
     <FxCompile Include="src\render\CursorVS.hlsl">

@@ -4,6 +4,8 @@
 
 #include <array>
 
+#include "../common/Log.h"
+
 namespace dd::transport
 {
 
@@ -29,7 +31,36 @@ Connection::Connection(SOCKET socket) : m_socket(socket)
 
 Connection::~Connection()
 {
+    if (m_qos)
+    {
+        if (m_qosFlow)
+        {
+            QOSRemoveSocketFromFlow(m_qos, m_socket, m_qosFlow, 0);
+        }
+        QOSCloseHandle(m_qos);
+    }
     closesocket(m_socket);
+}
+
+void Connection::SetReceiveTimeout(DWORD ms)
+{
+    setsockopt(m_socket, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&ms), sizeof(ms));
+}
+
+void Connection::EnableWifiQos()
+{
+    QOS_VERSION version{1, 0};
+    if (!m_qos && !QOSCreateHandle(&version, &m_qos))
+    {
+        m_qos = nullptr;
+        Log(L"wifi: QOSCreateHandle failed (%lu)", GetLastError());
+        return;
+    }
+    if (!QOSAddSocketToFlow(m_qos, m_socket, nullptr, QOSTrafficTypeAudioVideo, QOS_NON_ADAPTIVE_FLOW, &m_qosFlow))
+    {
+        m_qosFlow = 0;
+        Log(L"wifi: QoS tagging unavailable (%lu), sending best effort", GetLastError());
+    }
 }
 
 bool Connection::Send(protocol::MessageType type, uint8_t flags, uint64_t timestamp,
@@ -116,6 +147,13 @@ Listener::~Listener()
 
 bool Listener::Listen(uint16_t port)
 {
+    in_addr loopback{};
+    inet_pton(AF_INET, "127.0.0.1", &loopback);
+    return Listen(port, loopback);
+}
+
+bool Listener::Listen(uint16_t port, const in_addr& address)
+{
     m_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (m_socket == INVALID_SOCKET)
     {
@@ -129,7 +167,7 @@ bool Listener::Listen(uint16_t port)
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
-    inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+    addr.sin_addr = address;
 
     if (bind(m_socket, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR ||
         listen(m_socket, 1) == SOCKET_ERROR)

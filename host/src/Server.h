@@ -27,6 +27,10 @@ struct ServeOptions
     // Inject the client's touches on the streamed display (Windows touch injection).
     bool touchInput = true;
     std::wstring outputName; // debug: stream this existing output (e.g. \\.\DISPLAY1) instead
+    // Transports to serve. USB = 127.0.0.1 through `adb reverse`; Wi-Fi = the host's own
+    // Wi-Fi Direct access point, authenticated with the pairing code. Clients pick one.
+    bool usb = true;
+    bool wifi = true;
 };
 
 // Runs until the process is terminated. For each client: plugs a virtual monitor matching the
