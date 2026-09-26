@@ -64,10 +64,15 @@ Input passthrough is the stretch milestone M5.
 - [x] **Acceptance:** recorded stream plays back correctly (ffprobe: 146/146 frames, cursor visible)
 
 ### M3 — Live video on the tablet
-- [ ] Android protocol client + MediaCodec low-latency decode to Surface
-- [ ] `scripts/run.ps1`: `adb reverse`, launch host and app
-- [ ] Decoder-error recovery via `REQUEST_KEYFRAME`, reconnect on disconnect
-- [ ] **Acceptance:** moving a window on the virtual display is visible on the tablet
+- [x] Android protocol client (HELLO with real size/refresh/physical DPI) + MediaCodec decode to
+      Surface (`c2.mtk.avc.decoder` on the Pad Go; MTK low-latency hint; fallback config)
+- [x] `scripts/run.ps1`: `adb reverse`, install/launch the app, run the host
+- [x] Decoder-error recovery via `REQUEST_KEYFRAME` (observed once at startup, recovered);
+      automatic reconnect loop; stream lifetime tied to the Surface
+- [x] **Acceptance:** Windows' extended desktop (wallpaper, cursor) renders live on the OnePlus Pad Go
+- [ ] Hide the gesture-navigation handle; handle the "no input buffer" drop at decoder start more
+      gracefully (wait for the first input buffer instead of dropping the IDR)
+- [ ] Detect/avoid a second adb version (another tool's v40 server kills ours and the reverse tunnel)
 
 ### M4 — Measure and tune
 - [ ] PING/PONG clock sync and FRAME_STATS instrumentation; latency overlay/log

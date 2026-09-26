@@ -35,6 +35,11 @@ floor for what the tablet can see.
 | 2026-09-26 | same | `Flush()` after compose | no change | 24.2 / 38.6 ms |
 | 2026-09-26 | **Virtual monitor** 2408×1720@60 (IddCx), mostly static desktop | — | acquire 1.7, compose 3.2, **encode 12.2**, send 0.2 | 17.5 / 20.2 ms |
 | 2026-09-26 | Virtual monitor 1920×1200@60 | — | acquire 4.5, compose 2.1, encode 10.6, send 0.2 | 14.3 / 24.7 ms |
+| 2026-09-27 | **OnePlus Pad Go over adb**, 2408×1720@60, animated wallpaper (sustained 50–110 fps) | — | acquire 0.5–0.9, compose 1.5, **encode 5.9**, send 0.2 → **present→sent 8.0–8.7 ms** | (tablet-side timing: M4) |
+
+Sustained load drops encode from ~12–20 ms to ~6 ms, which strongly suggests the earlier numbers
+were GPU/media-engine clock ramp-up under bursty load. M4 lead: keep the media engine warm, or
+submit frames at a steady cadence.
 
 ### Open leads for M4
 - Encode takes ~20 ms at 6.4 MP even on the fastest preset, with no input wait. Next suspects:

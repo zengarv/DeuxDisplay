@@ -6,8 +6,8 @@ DeuxDisplay adds a real virtual monitor to Windows through an Indirect Display D
 that monitor with Desktop Duplication, hardware-encodes it to H.264 in low-latency mode, and
 streams it over an ADB USB tunnel to an Android app that decodes straight to the screen.
 
-> **Status: early development.** See [PLAN.md](PLAN.md) for milestones. Nothing here is ready
-> for end users yet.
+> **Status: early development, working end to end on the reference device.** See
+> [PLAN.md](PLAN.md) for milestones. Not yet packaged for end users.
 
 Reference hardware: OnePlus Pad Go (2408×1720 @ 90 Hz). Other Windows 11 PCs and Android 8+
 devices are meant to work too.
@@ -82,8 +82,15 @@ ffplay out.h264
 ```powershell
 cd android
 .\gradlew.bat assembleDebug
-adb install -r app\build\outputs\apk\debug\app-debug.apk
 ```
+
+### Run it
+With the tablet connected over USB (USB debugging on) and the driver installed:
+```powershell
+.\scripts\run.ps1 -Install    # adb reverse + install/launch the app + run the host; Ctrl+C to stop
+```
+The tablet shows up as a monitor to the right of your main display. Closing the app or unplugging
+the cable removes it again.
 
 ## Contributing
 See [CONTRIBUTING.md](CONTRIBUTING.md).
