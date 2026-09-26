@@ -1,14 +1,17 @@
 <#
 .SYNOPSIS
-  Starts the host and connects the Android app over USB and/or Wi-Fi.
+  Runs the host in this console and connects the Android app over USB and/or Wi-Fi.
 
 .DESCRIPTION
-  1. Sets up `adb reverse tcp:PORT tcp:PORT` so 127.0.0.1:PORT on the tablet reaches the PC.
-  2. Optionally (-Install) installs the debug APK.
-  3. Launches the DeuxDisplay app on the tablet.
-  4. Runs DeuxDisplayHost --serve in this console (Ctrl+C to stop; the monitor unplugs itself),
-     re-applying the adb reverse tunnel whenever it disappears (e.g. another tool restarts the
-     adb server).
+  For everyday use, `scripts\install-autostart.ps1` runs the host in the background instead,
+  and a tablet becomes a monitor whenever it's plugged in with the app open. This script is for
+  development, Wi-Fi, and trying options:
+
+  1. Optionally (-Install) installs the debug APK.
+  2. Launches the DeuxDisplay app on the tablet.
+  3. Runs DeuxDisplayHost --serve in this console (Ctrl+C to stop; the monitor unplugs itself).
+     The host itself keeps `adb reverse tcp:PORT tcp:PORT` in place whenever the tablet is
+     attached (re-plugged cable, USB mode switch, adb server restart).
 
   -Transport picks what the host serves: Both (default), Usb or Wifi. The app decides which one
   it uses (press Back on the tablet > Connection). With -Transport Wifi, adb is optional: steps
@@ -63,11 +66,11 @@ if (Test-Path $adb) {
     $adb = $null
 }
 
+if (Get-Process DeuxDisplayAgent -ErrorAction SilentlyContinue) {
+    throw 'DeuxDisplay is already running in the background (tray icon). Exit it from the tray menu, or run scripts\install-autostart.ps1 -Remove, first.'
+}
+
 if ($adb) {
-    if ($useAdb) {
-        & $adb @adbArgs reverse "tcp:$Port" "tcp:$Port" | Out-Null
-        Write-Host "adb reverse tcp:$Port -> PC tcp:$Port"
-    }
     if ($Install) {
         if (-not (Test-Path $Apk)) { throw "APK not built: $Apk (cd android; .\gradlew assembleDebug)" }
         & $adb @adbArgs install -r $Apk | Out-Host
@@ -82,26 +85,10 @@ Write-Host 'Starting host (Ctrl+C to stop)...'
 $hostArgs = @('--serve', '--port', $Port, '--bitrate', $BitrateKbps, '--max-fps', $MaxFps, '--codec', $Codec,
     '--transport', $Transport.ToLowerInvariant())
 if ($MaxStreamSize) { $hostArgs += @('--max-stream-size', $MaxStreamSize) }
+if ($adb -and $useAdb) { $hostArgs += @('--adb', $adb) }
 $hostProcess = Start-Process -FilePath $HostExe -NoNewWindow -PassThru -ArgumentList $hostArgs
 try {
-    # The tablet may be unplugged or the adb server restarted at any time: keep retrying quietly.
-    $ErrorActionPreference = 'Continue'
-    $wasMissing = $false
-    while (-not $hostProcess.HasExited) {
-        Start-Sleep -Seconds 2
-        if (-not ($adb -and $useAdb)) { continue }
-        $reverses = cmd /c "`"$adb`" $($adbArgs -join ' ') reverse --list 2>nul"
-        if (-not ($reverses -match "tcp:$Port")) {
-            cmd /c "`"$adb`" $($adbArgs -join ' ') reverse tcp:$Port tcp:$Port >nul 2>nul"
-            if ($LASTEXITCODE -eq 0) {
-                Write-Host 'adb reverse tunnel (re)established'
-                $wasMissing = $false
-            } elseif (-not $wasMissing) {
-                Write-Host 'Tablet not reachable over adb; waiting for it to reconnect...'
-                $wasMissing = $true
-            }
-        }
-    }
+    $hostProcess.WaitForExit()
 } finally {
     if (-not $hostProcess.HasExited) { Stop-Process -Id $hostProcess.Id }
 }
