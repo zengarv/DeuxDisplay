@@ -1,10 +1,12 @@
 # DeuxDisplay
 
-Use an Android tablet as a **low-latency extended monitor** for Windows 11, over a USB-C cable.
+Use an Android tablet as a **low-latency extended monitor** for Windows 11, over a USB-C cable
+or wirelessly over a direct Wi-Fi link to the PC.
 
 DeuxDisplay adds a real virtual monitor to Windows through an Indirect Display Driver. It captures
-that monitor with Desktop Duplication, hardware-encodes it to H.264 in low-latency mode, and
-streams it over an ADB USB tunnel to an Android app that decodes straight to the screen.
+that monitor with Desktop Duplication, hardware-encodes it to H.264/HEVC in low-latency mode, and
+streams it to an Android app that decodes straight to the screen. The stream travels over an ADB
+USB tunnel, or over a private Wi-Fi network the PC creates itself (no router in between).
 
 > **Status: early development, working end to end on the reference device.** See
 > [PLAN.md](PLAN.md) for milestones. Not yet packaged for end users.
@@ -14,9 +16,10 @@ devices are meant to work too.
 
 ## How it works
 
-A virtual monitor on the PC is captured, hardware-encoded and streamed over USB to the tablet,
-which decodes it straight to the screen. Touches on the tablet travel the same tunnel back and
-are injected on that monitor.
+A virtual monitor on the PC is captured, hardware-encoded and streamed to the tablet, which
+decodes it straight to the screen. Touches on the tablet travel the same connection back and are
+injected on that monitor. The host serves **USB** and **Wi-Fi** at the same time, and the app
+picks which one to use.
 
 ---
 
@@ -34,22 +37,26 @@ flowchart TB
             Encode["encode/<br/>Media Foundation HW H.264 / HEVC"]
             Server["Server · protocol/<br/>pacing · stats · keyframes"]
             Input["input/<br/>TouchTracker → InjectTouchInput"]
-            Tcp["transport/<br/>TCP 127.0.0.1 · TCP_NODELAY"]
+            Tcp["transport/<br/>TCP · TCP_NODELAY<br/>127.0.0.1 + access point address"]
+            Wireless["wireless/<br/>Wi-Fi Direct access point<br/>pairing code · WLAN tuning"]
             Capture --> Render --> Encode --> Server --> Tcp
             Tcp -- "INPUT" --> Input
+            Wireless -. "starts network,<br/>192.168.137.1" .-> Tcp
         end
         Display -- "PLUG / UNPLUG IOCTL" --> Monitor
         Monitor --> Capture
         Input -- "touch" --> DWM
     end
 
-    Tcp <== "USB-C · adb reverse tcp:27183" ==> Client
+    Tcp <== "USB · adb reverse tcp:27183" ==> Client
+    Tcp <== "Wi-Fi · direct, WPA2<br/>pairing-code auth" ==> Client
 
     subgraph Tablet["Android tablet"]
-        Client["StreamClient<br/>TCP · HELLO · clock sync"] --> Decoder["VideoDecoder<br/>MediaCodec HW, low latency"]
+        Client["StreamClient<br/>TCP · auth · HELLO · clock sync"] --> Decoder["VideoDecoder<br/>MediaCodec HW, low latency"]
         Decoder --> Surface["SurfaceView<br/>full screen"]
-        UI["MainActivity<br/>mode picker · touch capture"]
+        UI["MainActivity<br/>mode + connection picker · touch capture"]
         UI -- "picked mode → HELLO<br/>MotionEvent → INPUT" --> Client
+        Link["WifiLink<br/>joins the PC's network<br/>low-latency WifiLock"] -.-> Client
     end
 ```
 
@@ -59,6 +66,7 @@ flowchart TB
 | Host | `host/` | Plugs the monitor, captures, encodes, streams, injects touch |
 | Android client | `android/` | Connects, decodes to the screen, sends touch and the picked mode |
 | Wire protocol | `docs/wire-protocol.md` | Source of truth for every message both sides exchange |
+| Wi-Fi link | `host/src/wireless/`, `android/.../WifiLink.kt` | The PC's own network, pairing, radio tuning |
 
 ---
 
@@ -72,13 +80,24 @@ sequenceDiagram
     participant D as IddCx driver
     participant W as Windows
 
-    T->>H: TCP connect (adb reverse → 127.0.0.1)
+    alt USB
+        T->>H: TCP connect (adb reverse → 127.0.0.1)
+    else Wi-Fi
+        T->>T: Join DeuxDisplay-xxxx (WPA2, from the pairing code)
+        T->>H: TCP connect (192.168.137.1)
+        H->>T: AUTH_CHALLENGE (host nonce)
+        T->>H: AUTH_RESPONSE (client nonce + HMAC)
+        H->>T: AUTH_OK (host HMAC)
+    end
     T->>H: HELLO (panel size, refresh, DPI, codecs, picked mode)
     H->>D: PLUG (size, refresh rates, physical mm)
     D->>W: Monitor arrives with generated EDID
     W-->>H: New output appears (switched to "extend" if mirrored)
     H->>H: Build pipeline (duplication, composer, encoder)
     H->>T: CONFIG (codec, stream size, fps, bitrate)
+    opt USB session
+        H->>T: PAIRING (code for Wi-Fi, PC name)
+    end
     H->>T: VIDEO_FRAME [CODEC_CONFIG] SPS/PPS
     H->>T: VIDEO_FRAME [KEYFRAME]
 
@@ -100,7 +119,7 @@ sequenceDiagram
     alt User picks a new resolution / frame rate
         T->>H: Disconnect, reconnect with new HELLO
         H->>D: UNPLUG, then PLUG in the new mode
-    else App closed, tablet asleep or cable pulled
+    else App closed, tablet asleep, cable pulled or Wi-Fi lost
         T--xH: Connection drops
         H->>W: Lift all touch contacts
         H->>D: UNPLUG (also automatic if the host dies)
@@ -122,7 +141,7 @@ flowchart LR
         V2 --> V3["Draw cursor, scale<br/>BGRA → NV12 on GPU"]
         V3 --> V4["HW encode<br/>low-latency, no B-frames"]
         V4 --> V5["Split SPS/PPS<br/>header + payload, one send"]
-        V5 --> V6["TCP over the<br/>adb USB tunnel"]
+        V5 --> V6["TCP over the adb USB tunnel<br/>or the direct Wi-Fi link"]
         V6 --> V7["MediaCodec decode<br/>low-latency if supported"]
         V7 --> V8["Release to Surface<br/>immediately"]
     end
@@ -131,7 +150,7 @@ flowchart LR
         direction TB
         T1["MotionEvent<br/>unbuffered dispatch"] --> T2["Normalize to 0..65535<br/>per contact, slot 0-9"]
         T2 --> T3["INPUT touch frame<br/>sent on input thread"]
-        T3 --> T4["TCP over the<br/>adb USB tunnel"]
+        T3 --> T4["TCP over USB<br/>or Wi-Fi"]
         T4 --> T5["TouchTracker<br/>Down / Update / Up"]
         T5 --> T6["Map to monitor rect<br/>InjectTouchInput"]
     end
@@ -156,6 +175,43 @@ flowchart TB
     G --> H["Tablet scales to its panel"]
 ```
 
+---
+
+### Connecting over Wi-Fi
+
+The PC runs its own Wi-Fi network (a Wi-Fi Direct group in "legacy" mode, which the tablet joins
+like any WPA2 access point). Each frame crosses the air once, with no router and no other traffic
+on the link. One **pairing code** (20 characters) derives the network name, its WPA2 passphrase
+and the key for a mutual challenge-response, so only paired tablets can join or connect.
+
+```mermaid
+flowchart TB
+    subgraph Pair["Pair once"]
+        P1["USB session"] -- "PAIRING message" --> P3["Tablet stores the code"]
+        P2["DeuxDisplayHost --pair<br/>shows the code"] -. "or type it<br/>in the app" .-> P3
+    end
+
+    subgraph Connect["Every Wi-Fi session"]
+        C1["Host starts network<br/>DeuxDisplay-xxxx · 192.168.137.1"]
+        C2["App joins it<br/>WifiNetworkSpecifier<br/>(one-time system prompt)"]
+        C3["Low-latency WifiLock on tablet<br/>media streaming mode on PC"]
+        C4["TCP to the gateway<br/>AUTH challenge → AUTH_OK"]
+        C5["HELLO → stream"]
+        C1 --> C2 --> C3 --> C4 --> C5
+    end
+
+    P3 --> C2
+```
+
+- The host listens only on 127.0.0.1 (USB) and on its own network's address, never on your LAN.
+- While streaming over Wi-Fi the tablet leaves its usual Wi-Fi (most tablets can't join two
+  networks), so it has no internet until the app closes.
+- **Latency status:** the direct link is ~2x faster at the median and 3–7x higher in throughput
+  than going through a router. But the Windows/Intel AX211 access point is away for ~60 ms of
+  every ~100 ms beacon period, so frames currently land 55–60 ms after capture (vs ~23 ms over USB).
+  Details and next steps are in [docs/latency-notes.md](docs/latency-notes.md#wi-fi). USB is
+  still the lowest-latency option.
+
 More detail in [docs/architecture.md](docs/architecture.md) and the protocol spec in
 [docs/wire-protocol.md](docs/wire-protocol.md).
 
@@ -167,7 +223,7 @@ More detail in [docs/architecture.md](docs/architecture.md) and the protocol spe
 | `host/`              | Windows capture/encode/stream service (C++20)                   |
 | `android/`           | Android client app (Kotlin)                                     |
 | `docs/`              | Architecture, wire protocol, latency notes                      |
-| `scripts/`           | Dev bootstrap, driver test-signing/install, run helpers         |
+| `scripts/`           | Dev bootstrap, driver install, Wi-Fi firewall rule, run helpers |
 | `.github/workflows/` | CI                                                              |
 
 ## Building from source
@@ -205,7 +261,8 @@ msbuild driver\DeuxDisplayIdd.sln /p:Configuration=Release /p:Platform=x64
 
 ### Try the stream without a tablet
 ```powershell
-.\host\x64\Release\DeuxDisplayHost.exe --serve             # waits on 127.0.0.1:27183
+.\host\x64\Release\DeuxDisplayHost.exe --serve             # USB (127.0.0.1:27183) + Wi-Fi
+.\host\x64\Release\DeuxDisplayHost.exe --pair              # Wi-Fi pairing code
 python tools\dump_receiver.py --seconds 10                 # acts as the tablet; writes out.h264
 ffplay out.h264
 ```
@@ -224,11 +281,22 @@ With the tablet connected over USB (USB debugging on) and the driver installed:
 The tablet shows up as a monitor to the right of your main display. Closing the app or unplugging
 the cable removes it again.
 
+**Wireless:** after one USB session (which pairs the tablet), press **Back** on the tablet, set
+**Connection** to *Wi-Fi (direct to PC)* and **Apply**. Approve Android's "connect to
+DeuxDisplay-xxxx" prompt the first time. From then on the cable is optional:
+```powershell
+.\scripts\run.ps1 -Transport Wifi    # or Both (default) / Usb
+```
+Windows Firewall has to allow the host inbound. `install-driver.ps1` sets that up
+(`scripts\enable-wireless.ps1`), otherwise Windows asks the first time. The Wi-Fi option needs
+Android 10+ and a PC Wi-Fi adapter with Wi-Fi Direct.
+
 On the tablet:
 - **Touch** controls the PC: tap, drag, and multi-finger gestures are injected on the tablet's
   monitor (`--no-touch` on the host turns this off).
-- **Back** opens the stream settings: resolution and frame rate from what the device supports,
-  or *Auto*. Applying reconnects, and the monitor comes back in the new mode.
+- **Back** opens the settings: resolution and frame rate from what the device supports (or
+  *Auto*), the connection (USB or Wi-Fi), and a field for typing a pairing code. Applying
+  reconnects, and the monitor comes back in the new mode.
 
 ## Contributing
 See [CONTRIBUTING.md](CONTRIBUTING.md).

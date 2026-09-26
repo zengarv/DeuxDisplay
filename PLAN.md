@@ -87,6 +87,26 @@ Input passthrough is the stretch milestone M5.
 - [ ] 90 Hz mode
 - [ ] **Acceptance:** p50 capture→render < 50 ms
 
+### M6 — Wireless (direct Wi-Fi link)
+Branch `feature/wireless`. The tablet joins a network the PC runs itself (one hop, no router);
+USB stays available and the app picks the connection. Design: docs/architecture.md, Transport.
+- [x] Option study: LAN, PC access point, Wi-Fi Direct P2P, Miracast, adb over Wi-Fi
+      (PC access point wins; measurements in docs/latency-notes.md)
+- [x] Protocol: `AUTH_CHALLENGE`/`AUTH_RESPONSE`/`AUTH_OK` (mutual HMAC) and `PAIRING`;
+      pairing-code derivations with shared test vectors (host + Android)
+- [x] Host: Wi-Fi Direct legacy access point (unpackaged, WRL), listener bound to its address,
+      USB + Wi-Fi served together, WLAN tuning + QoS during Wi-Fi sessions, `--transport`,
+      `--pair [--reset]`, DPAPI pairing store
+- [x] Android: Connection picker, `WifiNetworkSpecifier` join, low-latency `WifiLock`,
+      auth handshake, pairing over USB or typed code
+- [x] Scripts: `enable-wireless.ps1` (firewall), `run.ps1 -Transport`
+- [x] **Verified on the Pad Go:** pair over USB, then stream and reconnect over Wi-Fi
+- [ ] Fix the per-beacon gap: the Windows/AX211 group owner is away ~60 ms of every 102 ms
+      (p95 ~60 ms even at 100 Mbit/s). Try: a newer Intel driver, the tablet as access point
+      with the PC as client, and the home LAN with the tablet's low-latency lock held
+- [ ] Encoder for Wi-Fi: cap frame sizes, intra refresh instead of large IDRs, bitrate adaptation
+- [ ] Wi-Fi touch/pen check on hardware; UDP video + FEC only if TCP stalls show up in p95
+
 ### M5 — Input passthrough (stretch)
 - [x] Multi-touch (10 contacts) → `INPUT` touch frames → `InjectTouchInput` mapped to the virtual
       display; host-side contact tracking lifts lost/vanished contacts; `--no-touch` to disable

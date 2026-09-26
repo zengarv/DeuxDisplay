@@ -47,7 +47,9 @@ nodes block Visual Studio installer updates.
 ## Rules that matter
 - **Latency is the product.** Don't add buffering, queues, frame pacing, or extra copies in
   the frame path without measuring the effect. Log numbers in `docs/latency-notes.md`.
-- Sockets bind to **127.0.0.1 only**. The protocol has no auth.
+- Sockets bind to **127.0.0.1** (USB) or to the **host's own Wi-Fi Direct access point
+  address** (Wi-Fi), never to all interfaces or the LAN. Wi-Fi sessions must pass the
+  pairing-code handshake before anything else; the protocol has no encryption of its own.
 - Always set `TCP_NODELAY`, and send header + payload in **one** write.
 - No FFmpeg or GPL dependencies. The host uses the Windows SDK only; the repo is MIT.
 - Capture only the virtual display's output, never "output 0 / primary".

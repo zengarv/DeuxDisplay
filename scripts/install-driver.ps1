@@ -14,6 +14,7 @@
     4. Installs the package into the driver store with pnputil.
     5. Creates the persistent DeuxDisplay device (`DeuxDisplayHost --install-device`), which
        needs the host to be built first.
+    6. Allows the host through Windows Firewall for Wi-Fi sessions (enable-wireless.ps1).
 
   After this, no admin rights are needed: DeuxDisplayHost (as a normal user) plugs the virtual
   monitor when a client connects and unplugs it when the client leaves.
@@ -97,4 +98,7 @@ if ($LASTEXITCODE -notin 0, 259, 3010) { throw "pnputil failed ($LASTEXITCODE)" 
 # 5. Persistent device (no monitor is plugged until the host asks for one)
 & $Host_ --install-device | Out-Host
 if ($LASTEXITCODE -ne 0) { throw 'DeuxDisplayHost --install-device failed' }
+# 6. Firewall rule for Wi-Fi sessions
+& (Join-Path $PSScriptRoot 'enable-wireless.ps1')
+
 Write-Host 'Done. As a normal user, run `DeuxDisplayHost --create-display` (test) or `--serve`.'

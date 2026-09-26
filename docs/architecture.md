@@ -58,7 +58,10 @@ Native C++20, no third-party dependencies beyond the Windows SDK.
   `MFT_ENUM_FLAG_HARDWARE`, so NVENC / Quick Sync / AMF are all reached through one path),
   `CODECAPI_AVLowLatencyMode`, no B-frames, low-delay rate control. Frames stay on the GPU
   (DXGI device manager) where possible.
-- **transport/** — loopback-only TCP listener, `TCP_NODELAY`, header+payload in one send.
+- **transport/** — TCP listeners on 127.0.0.1 (USB) and on the host's own access point
+  (Wi-Fi), `TCP_NODELAY`, header+payload in one send.
+- **wireless/** — the Wi-Fi Direct access point, the pairing-code store (DPAPI), and WLAN
+  tuning (media streaming mode, no background scans) held during Wi-Fi sessions.
 - **protocol/** — message (de)serialisation for [wire-protocol.md](wire-protocol.md).
 
 ### Android client — `android/`
@@ -68,15 +71,43 @@ Kotlin, minSdk 26, targets API 35. A single full-screen, orientation-locked acti
 configuration falls back to a plain config if the vendor codec rejects low-latency keys.
 
 ### Transport
-`adb reverse tcp:<port> tcp:<port>` lets the tablet connect to `127.0.0.1:<port>` and reach
-the host listener over USB. This needs nothing beyond USB debugging, and it is the same
-mechanism scrcpy relies on. The protocol is transport-agnostic, so USB tethering (RNDIS) or the
-Android Open Accessory protocol could replace ADB later without touching frame handling.
+The host serves two transports at once; the app picks one (settings panel > Connection).
+
+**USB.** `adb reverse tcp:<port> tcp:<port>` lets the tablet connect to `127.0.0.1:<port>` and
+reach the host listener over USB. This needs nothing beyond USB debugging, and it is the same
+mechanism scrcpy relies on. USB sessions also hand the tablet the pairing code for Wi-Fi.
+
+**Wi-Fi (direct).** The host starts its own network with `WiFiDirectAdvertisementPublisher` in
+legacy mode (a Wi-Fi Direct group owner that ordinary clients join like a WPA2 access point).
+Windows puts the host at `192.168.137.1`. The tablet joins with a `WifiNetworkSpecifier` (one
+system prompt), which routes only the app's sockets over it, and holds a low-latency
+`WifiLock`. Frames make one hop, with no router and no other traffic in between.
+
+- Network name, WPA2 passphrase and the session auth key all derive from one 20-character
+  pairing code ([wire-protocol.md](wire-protocol.md#pairing-and-authentication)).
+- The host listens on the access point's address only, never on the LAN, and every session
+  passes a mutual HMAC challenge before `HELLO`.
+- While a Wi-Fi session runs, the host holds WLAN media streaming mode, turns off background
+  scans and tags the socket as audio/video (qWAVE, best effort).
+- The tablet can't stay on its home Wi-Fi at the same time (no dual-station support on the Pad
+  Go), so it has no internet while streaming over Wi-Fi. It rejoins its home Wi-Fi when the
+  app stops.
+- Windows Firewall must allow the host inbound (`scripts/enable-wireless.ps1`, run by
+  `install-driver.ps1`; otherwise Windows asks on first use).
+
+Why not the home LAN or true Wi-Fi Direct? Through a router every frame crosses the air twice
+and competes with other traffic (measured: ~3x slower bulk transfers). Android's
+`WifiP2pManager` adds pairing prompts and vendor quirks without a latency gain. Miracast would
+bypass our encoder and input path. See [latency-notes.md](latency-notes.md#wi-fi).
 
 ## Security notes
 
-- The streaming socket binds to 127.0.0.1 only and is unauthenticated. See
-  [wire-protocol.md](wire-protocol.md).
+- The USB socket binds to 127.0.0.1 and is unauthenticated. The Wi-Fi socket binds only to the
+  host's own access point, which is WPA2-protected, and requires the pairing-code handshake.
+  See [wire-protocol.md](wire-protocol.md).
+- The pairing code is stored DPAPI-encrypted per user (`%LOCALAPPDATA%\DeuxDisplay\pairing.bin`)
+  on the PC, and in the app's private storage on the tablet. `DeuxDisplayHost --pair --reset`
+  replaces it and unpairs every tablet.
 - The driver's device object grants read/write to interactive users (INF `Security` SDDL), so
   any logged-in user can plug/unplug the DeuxDisplay monitor. That's harmless (it's their own
   desktop) and it's what lets the host run without admin rights.

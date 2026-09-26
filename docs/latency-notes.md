@@ -74,6 +74,33 @@ Next levers, by expected perceived gain:
 2. Keep the GPU media engine clocked up (encode 10–12 ms bursty vs ~6 ms sustained).
 3. Try other tablets/decoders. Qualcomm/Exynos decoders usually honor low-latency mode.
 
+## Wi-Fi
+
+Echo tests (`nc -L cat` on the tablet, TCP_NODELAY client on the PC at 60–200 Hz), OnePlus Pad Go
+(Wi-Fi 5, 1x1, 433 Mbit/s max) and the dev PC (Intel AX211), 2026-09-27. Round trip = PC→tablet→PC.
+
+| Path | Setup | 64 B p50 / p95 | 32–100 KB p50 / p95 | Throughput at p50 |
+|------|-------|---------------:|--------------------:|------------------:|
+| Router (PC and tablet on DEEPNET5, ch 36) | no app lock (tablet power save on) | 5.4 / 46 ms | 31.5 / 97 ms (32 KB) | ~16 Mbit/s |
+| **PC access point** (legacy Wi-Fi Direct GO, ch 149/157/161) | PC also on home Wi-Fi ch 36 | 2.1–3.2 / 62–84 ms | 9.5 / 43–76 ms (32 KB) | ~54 Mbit/s |
+| PC access point | app's low-latency lock held (tablet power save off) | 3.2 / 62 ms | 14.5 / 82 ms (100 KB) | ~111 Mbit/s |
+| PC access point | PC disconnected from home Wi-Fi (no channel sharing) | 3.1 / 63 ms | 15.5 / 80 ms (100 KB) | ~103 Mbit/s |
+
+Findings:
+- The direct link is ~2x faster at the median and 3–7x higher in throughput than the router path,
+  so it's the right transport. Windows picks the access point's channel itself (149–161 here, no
+  API to choose); it didn't share the home network's channel 36.
+- **The tail is set by a periodic gap on the PC side:** spikes of ~60 ms arrive every 102 ms (one
+  beacon interval, 100 TU), about 1 in 12 packets at 200 Hz. They persist with the tablet's power
+  save off, with the PC off its home Wi-Fi, with WLAN media streaming mode on / background scans
+  off, and with the publisher non-discoverable. The likely cause is the Intel AX211 group owner's
+  absence schedule (Notice of Absence), which Windows doesn't expose.
+- Streaming the desktop over the link today (H.264 2408x1720, 5–15 Mbit/s bursty): present→received
+  p50 56–60 ms, p95 90–107 ms, vs ~23 ms over USB. The host's send time rises to 10–70 ms when a
+  frame hits a gap.
+- Next: a newer Intel driver; the tablet as access point (Android LocalOnlyHotspot) with the PC
+  joining as a client; the router path with the app's low-latency lock held.
+
 ### Open leads for M4
 - Encode takes ~20 ms at 6.4 MP even on the fastest preset, with no input wait. Next suspects:
   GPU clock ramp-up under bursty load, MFT internal async depth
