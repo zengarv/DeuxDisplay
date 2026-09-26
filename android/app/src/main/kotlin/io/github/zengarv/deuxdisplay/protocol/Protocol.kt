@@ -19,6 +19,9 @@ object Protocol {
 
     /** Re-encode of the previous image, sent to push the real frame out of one-behind decoders. */
     const val FLAG_REPEAT: Int = 1 shl 2
+
+    const val INPUT_KIND_TOUCH: Int = 1
+    const val MAX_TOUCH_CONTACTS: Int = 10
 }
 
 object MessageType {
@@ -180,6 +183,46 @@ data class FrameStats(val captureTs: Long, val receivedTs: Long, val decodedTs: 
 
     companion object {
         fun parse(payload: ByteArray): FrameStats = parsing(payload) { FrameStats(long, long, long, long) }
+    }
+}
+
+object TouchAction {
+    const val DOWN: Int = 0
+    const val MOVE: Int = 1
+    const val UP: Int = 2
+    const val CANCEL: Int = 3
+}
+
+/** One contact of an INPUT touch frame. [x]/[y] are 0..65535 across the video frame. */
+data class TouchContact(val id: Int, val action: Int, val x: Int, val y: Int, val pressure: Int = 0)
+
+/** INPUT payload listing every contact currently on the screen. */
+fun serializeTouchFrame(contacts: List<TouchContact>): ByteArray {
+    require(contacts.size in 1..Protocol.MAX_TOUCH_CONTACTS) { "${contacts.size} contacts" }
+    return le(4 + 8 * contacts.size).apply {
+        put(Protocol.INPUT_KIND_TOUCH.toByte())
+        put(contacts.size.toByte())
+        putShort(0)
+        for (c in contacts) {
+            put(c.id.toByte())
+            put(c.action.toByte())
+            putShort(c.x.toShort())
+            putShort(c.y.toShort())
+            putShort(c.pressure.toShort())
+        }
+    }.array()
+}
+
+fun parseTouchFrame(payload: ByteArray): List<TouchContact> = parsing(payload) {
+    if ((get().toInt() and 0xFF) != Protocol.INPUT_KIND_TOUCH) throw ProtocolException("not a touch frame")
+    val count = get().toInt() and 0xFF
+    if (count !in 1..Protocol.MAX_TOUCH_CONTACTS) throw ProtocolException("$count contacts")
+    getShort() // reserved
+    List(count) {
+        val id = get().toInt() and 0xFF
+        val action = get().toInt() and 0xFF
+        if (id >= Protocol.MAX_TOUCH_CONTACTS || action > TouchAction.CANCEL) throw ProtocolException("bad contact")
+        TouchContact(id, action, u16(), u16(), u16())
     }
 }
 

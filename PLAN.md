@@ -88,4 +88,8 @@ Input passthrough is the stretch milestone M5.
 - [ ] **Acceptance:** p50 capture→render < 50 ms
 
 ### M5 — Input passthrough (stretch)
-- [ ] Touch/pen → `INPUT` messages → `SendInput`/pointer injection mapped to the virtual display
+- [x] Multi-touch (10 contacts) → `INPUT` touch frames → `InjectTouchInput` mapped to the virtual
+      display; host-side contact tracking lifts lost/vanished contacts; `--no-touch` to disable
+      (unit tested; not yet verified on hardware)
+- [ ] Verify touch on the Pad Go + Windows (taps, drags, pinch; long holds with no movement)
+- [ ] Pen (pressure/tilt/hover) via synthetic pointer devices (`PT_PEN`)

@@ -116,6 +116,35 @@ void PingPongStatsRoundTrip()
           stats->renderedTs == 4);
 }
 
+void TouchFrameRoundTrip()
+{
+    TouchFrame t;
+    t.contacts.push_back({1, TouchAction::Down, 0x1234, 0xABCD, 512});
+    auto bytes = SerializeTouchFrame(t);
+    // Same vector as android/.../ProtocolTest.kt.
+    const std::vector<uint8_t> expected = {0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x34, 0x12, 0xCD, 0xAB, 0x00, 0x02};
+    CHECK(bytes == expected);
+
+    auto p = ParseTouchFrame(bytes);
+    CHECK(p.has_value() && p->contacts.size() == 1);
+    CHECK(p->contacts[0].id == 1 && p->contacts[0].action == TouchAction::Down && p->contacts[0].x == 0x1234 &&
+          p->contacts[0].y == 0xABCD && p->contacts[0].pressure == 512);
+
+    CHECK(!ParseTouchFrame(std::span(bytes).first(11)).has_value()); // truncated contact
+    auto bad = bytes;
+    bad[0] = 2; // unknown input kind
+    CHECK(!ParseTouchFrame(bad).has_value());
+    bad = bytes;
+    bad[4] = 10; // slot out of range
+    CHECK(!ParseTouchFrame(bad).has_value());
+    bad = bytes;
+    bad[5] = 4; // unknown action
+    CHECK(!ParseTouchFrame(bad).has_value());
+    bad = bytes;
+    bad[1] = 0; // no contacts
+    CHECK(!ParseTouchFrame(bad).has_value());
+}
+
 } // namespace
 
 void RunProtocolTests()
@@ -125,4 +154,5 @@ void RunProtocolTests()
     HelloRoundTrip();
     ConfigRoundTrip();
     PingPongStatsRoundTrip();
+    TouchFrameRoundTrip();
 }

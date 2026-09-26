@@ -12,6 +12,7 @@
 #include "display/VirtualDisplay.h"
 #include "encode/AnnexB.h"
 #include "encode/MfH264Encoder.h"
+#include "input/TouchInjector.h"
 #include "render/FrameComposer.h"
 #include "transport/Tcp.h"
 
@@ -32,6 +33,7 @@ struct Pipeline
     capture::DesktopDuplicator duplicator;
     render::FrameComposer composer;
     encode::MfH264Encoder encoder;
+    RECT desktopRect{}; // where the output sits on the Windows desktop (for touch)
     UINT width = 0; // desktop (virtual monitor) size
     UINT height = 0;
     UINT streamWidth = 0; // encoded size
@@ -64,6 +66,14 @@ struct Pipeline
         {
             return hr;
         }
+        DXGI_OUTPUT_DESC outputDesc{};
+        hr = output.output->GetDesc(&outputDesc);
+        if (FAILED(hr))
+        {
+            return hr;
+        }
+        desktopRect = outputDesc.DesktopCoordinates;
+
         const DXGI_OUTDUPL_DESC desc = duplicator.Desc();
         width = desc.ModeDesc.Width;
         height = desc.ModeDesc.Height;
@@ -447,6 +457,10 @@ void RunSession(transport::Connection& conn, const ServeOptions& serveOptions, V
         return;
     }
 
+    // Declared before the reader thread, which injects into it; lifts all contacts on exit.
+    input::TouchInjector touch;
+    touch.SetTarget(pipeline.desktopRect);
+
     std::atomic<bool> stop{false};
     std::atomic<bool> keyframeRequested{false};
     std::thread reader([&] {
@@ -465,6 +479,15 @@ void RunSession(transport::Connection& conn, const ServeOptions& serveOptions, V
                 break;
             case MessageType::RequestKeyframe:
                 keyframeRequested = true;
+                break;
+            case MessageType::Input:
+                if (options.touchInput)
+                {
+                    if (auto frame = protocol::ParseTouchFrame(p))
+                    {
+                        touch.Inject(*frame);
+                    }
+                }
                 break;
             case MessageType::Ping:
                 if (auto id = protocol::ParsePing(p))
@@ -569,6 +592,7 @@ void RunSession(transport::Connection& conn, const ServeOptions& serveOptions, V
             }
             haveFrame = false;
             lastCodecConfig.clear();
+            touch.SetTarget(pipeline.desktopRect);
             if (pipeline.width != oldWidth || pipeline.height != oldHeight || pipeline.fps != oldFps)
             {
                 if (!SendConfig(conn, pipeline, options.bitrateKbps))

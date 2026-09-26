@@ -110,10 +110,12 @@ void PrintUsage()
     std::wprintf(L"DeuxDisplayHost\n\n"
                  L"Usage:\n"
                  L"  DeuxDisplayHost --serve [--port N] [--bitrate KBPS] [--max-fps N] [--max-stream-size WxH]\n"
-                 L"                          [--codec auto|h264|hevc] [--repeat-frames] [--output \\\\.\\DISPLAYn]\n"
+                 L"                          [--codec auto|h264|hevc] [--repeat-frames] [--no-touch]\n"
+                 L"                          [--output \\\\.\\DISPLAYn]\n"
                  L"      Stream to a client on 127.0.0.1:N (default 27183), plugging a virtual monitor that\n"
                  L"      matches the client. --output streams an existing monitor instead (debugging).\n"
                  L"      A resolution/frame rate picked in the tablet app overrides --max-stream-size/--max-fps.\n"
+                 L"      Touches on the tablet are injected on the display unless --no-touch is given.\n"
                  L"  DeuxDisplayHost --create-display [SECONDS]\n"
                  L"      Plug a 2408x1720 virtual monitor until Enter is pressed (or for SECONDS)\n"
                  L"  DeuxDisplayHost --list-outputs     List DXGI adapters and outputs\n"
@@ -155,6 +157,10 @@ bool ParseServeOptions(int argc, wchar_t** argv, dd::ServeOptions& options)
         else if (arg == L"--repeat-frames")
         {
             options.repeatFrames = true;
+        }
+        else if (arg == L"--no-touch")
+        {
+            options.touchInput = false;
         }
         else if (arg == L"--max-fps" && i + 1 < argc)
         {

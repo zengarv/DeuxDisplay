@@ -6,6 +6,7 @@ int main()
     RunEdidTests();
     RunAnnexBTests();
     RunPointerShapeTests();
+    RunTouchTests();
 
     if (g_failures != 0)
     {

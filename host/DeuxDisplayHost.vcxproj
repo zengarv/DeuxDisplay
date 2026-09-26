@@ -56,6 +56,8 @@
     <ClCompile Include="src\display\VirtualDisplay.cpp" />
     <ClCompile Include="src\encode\AnnexB.cpp" />
     <ClCompile Include="src\encode\MfH264Encoder.cpp" />
+    <ClCompile Include="src\input\TouchInjector.cpp" />
+    <ClCompile Include="src\input\TouchTracker.cpp" />
     <ClCompile Include="src\protocol\Protocol.cpp" />
     <ClCompile Include="src\render\FrameComposer.cpp" />
     <ClCompile Include="src\transport\Tcp.cpp" />
@@ -70,6 +72,8 @@
     <ClInclude Include="src\display\VirtualDisplay.h" />
     <ClInclude Include="src\encode\AnnexB.h" />
     <ClInclude Include="src\encode\MfH264Encoder.h" />
+    <ClInclude Include="src\input\TouchInjector.h" />
+    <ClInclude Include="src\input\TouchTracker.h" />
     <ClInclude Include="src\protocol\Protocol.h" />
     <ClInclude Include="src\render\FrameComposer.h" />
     <ClInclude Include="src\transport\Tcp.h" />

@@ -250,4 +250,47 @@ std::optional<FrameStats> ParseFrameStats(std::span<const uint8_t> payload)
     return msg;
 }
 
+std::vector<uint8_t> SerializeTouchFrame(const TouchFrame& msg)
+{
+    Writer w(4 + 8 * msg.contacts.size());
+    w.Put(kInputKindTouch);
+    w.Put(static_cast<uint8_t>(msg.contacts.size()));
+    w.Put(uint16_t{0});
+    for (const auto& c : msg.contacts)
+    {
+        w.Put(c.id);
+        w.Put(static_cast<uint8_t>(c.action));
+        w.Put(c.x);
+        w.Put(c.y);
+        w.Put(c.pressure);
+    }
+    return w.Take();
+}
+
+std::optional<TouchFrame> ParseTouchFrame(std::span<const uint8_t> payload)
+{
+    Reader r(payload);
+    uint8_t kind = 0;
+    uint8_t count = 0;
+    uint16_t reserved = 0;
+    if (!r.Get(kind) || kind != kInputKindTouch || !r.Get(count) || count == 0 || count > kMaxTouchContacts ||
+        !r.Get(reserved))
+    {
+        return std::nullopt;
+    }
+    TouchFrame msg;
+    msg.contacts.resize(count);
+    for (auto& c : msg.contacts)
+    {
+        uint8_t action = 0;
+        if (!r.Get(c.id) || !r.Get(action) || !r.Get(c.x) || !r.Get(c.y) || !r.Get(c.pressure) ||
+            c.id >= kMaxTouchContacts || action > static_cast<uint8_t>(TouchAction::Cancel))
+        {
+            return std::nullopt;
+        }
+        c.action = static_cast<TouchAction>(action);
+    }
+    return msg;
+}
+
 } // namespace dd::protocol

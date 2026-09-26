@@ -87,7 +87,8 @@ Android Open Accessory protocol could replace ADB later without touching frame h
 
 - Exactly one ADB device attached (scripts target it via `adb -s <serial>`).
 - One virtual display, one fixed landscape mode, SDR only.
-- No audio, no input passthrough (input is milestone M5).
+- No audio. Input passthrough (M5) covers touch only: `INPUT` touch frames are injected with
+  Windows touch injection on the virtual display; pen is not forwarded yet.
 - The cursor is composited into the video frame. A separate cursor channel (`CURSOR` message)
   is reserved for later if cursor latency needs to be decoupled from video.
 
