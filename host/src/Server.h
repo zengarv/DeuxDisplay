@@ -31,6 +31,9 @@ struct ServeOptions
     // Wi-Fi Direct access point, authenticated with the pairing code. Clients pick one.
     bool usb = true;
     bool wifi = true;
+    // USB: keep `adb reverse` in place for every attached tablet (plug in -> display).
+    bool adbWatch = true;
+    std::wstring adbPath; // empty = bootstrap SDK's adb, then PATH
 };
 
 // Runs until the process is terminated. For each client: plugs a virtual monitor matching the

@@ -1,5 +1,7 @@
 #include "Server.h"
 
+#include "adb/AdbWatcher.h"
+
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
@@ -789,6 +791,14 @@ int Serve(const ServeOptions& options)
     {
         Log(L"listen on 127.0.0.1:%u failed (%d)", options.port, WSAGetLastError());
         return 1;
+    }
+
+    // Plug and play over USB: re-creates the adb tunnel whenever a tablet (re)appears.
+    std::optional<adb::AdbWatcher> adbWatcher;
+    if (options.usb && options.adbWatch)
+    {
+        adbWatcher.emplace(options.port, adb::AdbWatcher::FindAdb(options.adbPath));
+        adbWatcher->Start();
     }
 
     wireless::WifiDirectAp accessPoint;

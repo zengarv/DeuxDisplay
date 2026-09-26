@@ -131,11 +131,13 @@ void PrintUsage()
                  L"Usage:\n"
                  L"  DeuxDisplayHost --serve [--port N] [--bitrate KBPS] [--max-fps N] [--max-stream-size WxH]\n"
                  L"                          [--codec auto|h264|hevc] [--repeat-frames] [--no-touch]\n"
-                 L"                          [--transport both|usb|wifi] [--output \\\\.\\DISPLAYn]\n"
+                 L"                          [--transport both|usb|wifi] [--no-adb] [--adb PATH]\n"
+                 L"                          [--output \\\\.\\DISPLAYn]\n"
                  L"      Stream to a client, plugging a virtual monitor that matches the client. Clients connect\n"
                  L"      over USB (127.0.0.1:N through adb reverse, default port 27183) or over Wi-Fi (a private\n"
                  L"      network this PC starts; paired tablets only). --output streams an existing monitor\n"
-                 L"      instead (debugging).\n"
+                 L"      instead (debugging). Over USB the host keeps `adb reverse` in place for every attached\n"
+                 L"      tablet, so plugging one in (app open) adds the display; --no-adb turns that off.\n"
                  L"      A resolution/frame rate picked in the tablet app overrides --max-stream-size/--max-fps.\n"
                  L"      Touches on the tablet are injected on the display unless --no-touch is given.\n"
                  L"  DeuxDisplayHost --create-display [SECONDS]\n"
@@ -198,6 +200,14 @@ bool ParseServeOptions(int argc, wchar_t** argv, dd::ServeOptions& options)
             {
                 return false;
             }
+        }
+        else if (arg == L"--no-adb")
+        {
+            options.adbWatch = false;
+        }
+        else if (arg == L"--adb" && i + 1 < argc)
+        {
+            options.adbPath = argv[++i];
         }
         else if (arg == L"--output" && i + 1 < argc)
         {

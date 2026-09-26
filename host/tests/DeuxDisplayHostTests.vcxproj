@@ -42,6 +42,8 @@
     <ClCompile Include="AnnexBTests.cpp" />
     <ClCompile Include="PointerShapeTests.cpp" />
     <ClCompile Include="TouchTests.cpp" />
+    <ClCompile Include="AdbTests.cpp" />
+    <ClCompile Include="..\src\adb\AdbProtocol.cpp" />
     <ClCompile Include="..\src\input\TouchTracker.cpp" />
     <ClCompile Include="..\src\capture\PointerShape.cpp" />
     <ClCompile Include="..\src\protocol\Protocol.cpp" />

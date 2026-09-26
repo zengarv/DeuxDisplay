@@ -50,6 +50,8 @@
   <ItemGroup>
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\Server.cpp" />
+    <ClCompile Include="src\adb\AdbProtocol.cpp" />
+    <ClCompile Include="src\adb\AdbWatcher.cpp" />
     <ClCompile Include="src\capture\DesktopDuplicator.cpp" />
     <ClCompile Include="src\capture\OutputLocator.cpp" />
     <ClCompile Include="src\capture\PointerShape.cpp" />
@@ -68,6 +70,8 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\Server.h" />
+    <ClInclude Include="src\adb\AdbProtocol.h" />
+    <ClInclude Include="src\adb\AdbWatcher.h" />
     <ClInclude Include="src\capture\DesktopDuplicator.h" />
     <ClInclude Include="src\capture\OutputLocator.h" />
     <ClInclude Include="src\capture\PointerShape.h" />
