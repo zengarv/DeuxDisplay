@@ -41,6 +41,39 @@ Sustained load drops encode from ~12–20 ms to ~6 ms, which strongly suggests t
 were GPU/media-engine clock ramp-up under bursty load. M4 lead: keep the media engine warm, or
 submit frames at a steady cadence.
 
+## End-to-end telemetry (2026-09-27, OnePlus Pad Go over adb)
+
+From `FRAME_STATS` with PING/PONG clock sync, in ms after Windows presented the frame (p50):
+
+| Config | received | decoded | Notes |
+|--------|---------:|--------:|-------|
+| H.264 2408×1720, uncapped (up to 110 fps) | 14–26 | 57 → 88 (growing) | decoder queue grows: over its ~60 fps capacity |
+| H.264 2408×1720, **60 fps cap** | ~23 | ~60 | stable; ~37 ms inside the decoder |
+| H.264 2016×1440 (within decoder spec) | ~25 | ~58 | resolution isn't the cause |
+| HEVC 2016×1440 | ~23 | ~56 | codec isn't the cause |
+| HEVC 2016×1440, surfaceless decode | ~23 | ~56 | display back-pressure isn't the cause |
+| HEVC 2016×1440 + REPEAT frames | ~19 | ~49 | small gain, doubles decode work |
+| H.264 2408×1720 + REPEAT frames | 115 | 227 | **overloads the decoder: don't** |
+| Software decoder `c2.android.avc.decoder` | 20–80 | 76 → 214 | far too slow on Helio G99 |
+
+Findings:
+- `c2.mtk.avc.decoder`/`c2.mtk.hevc.decoder` always hold **~2 frames** (~30 ms at typical rates).
+  `KEY_LOW_LATENCY`, `vdec-lowlatency`, disabling OPPO VPP, 1 reference frame, AUD boundaries,
+  in-spec resolution, HEVC, and surfaceless output all left it unchanged. This looks like the
+  MediaTek LAT/CORE decode pipeline; it can't be tuned away through MediaCodec.
+- Both MTK decoders are rated for ≤ 2560×1440; H.264 manages ~60 fps at 2408×1720. **Never send
+  more frames than the client can decode** (hence `--max-fps`, default 60).
+- `OnFrameRenderedListener` never fires on this device, so on-screen time is unmeasured (est.
+  +1–2 vsync).
+- Remaining budget (p50): encode ~10–12, capture ~4, transport ~5, decode ~30, display ~16–25.
+
+Next levers, by expected perceived gain:
+1. **Draw the cursor on the tablet** (`CURSOR` messages + an overlay view). Pointer motion then
+   skips encode/decode entirely, leaving roughly transport + one vsync. This is most of the
+   "sluggish" feel.
+2. Keep the GPU media engine clocked up (encode 10–12 ms bursty vs ~6 ms sustained).
+3. Try other tablets/decoders. Qualcomm/Exynos decoders usually honor low-latency mode.
+
 ### Open leads for M4
 - Encode takes ~20 ms at 6.4 MP even on the fastest preset, with no input wait. Next suspects:
   GPU clock ramp-up under bursty load, MFT internal async depth

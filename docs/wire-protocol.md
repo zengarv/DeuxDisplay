@@ -91,6 +91,12 @@ Payload is one complete access unit in **Annex-B** format (start-code delimited 
 |---------:|-----------------------------------------------------------|
 | 0        | `KEYFRAME` — access unit is an IDR                        |
 | 1        | `CODEC_CONFIG` — payload contains only SPS/PPS (/VPS)     |
+| 2        | `REPEAT` — re-encode of the previous image (see below)    |
+
+`REPEAT` frames exist because some hardware decoders (e.g. MediaTek) only output frame N once
+frame N+1 has been submitted. Right after each frame the host sends a cheap re-encode of the
+same image (almost entirely skip blocks), so the real frame leaves the decoder immediately.
+Clients decode them like any other frame; they're excluded from `FRAME_STATS`.
 
 The host sends a `CODEC_CONFIG` frame before the first keyframe and whenever parameters change.
 Frames arrive at a variable rate: the host only sends when the desktop changed.
@@ -108,14 +114,16 @@ estimate (NTP-style, assuming symmetric paths) used to put `FRAME_STATS` on the 
 
 ### `FRAME_STATS` (client → host)
 
-| Size | Field            | Notes                                                   |
-|-----:|------------------|---------------------------------------------------------|
-| 8    | `capture_ts`     | Echo of the `VIDEO_FRAME` header timestamp (host clock) |
-| 8    | `received_ts`    | Client clock: last payload byte read                    |
-| 8    | `decoded_ts`     | Client clock: output buffer available from decoder      |
-| 8    | `rendered_ts`    | Client clock: buffer released to the Surface            |
+| Size | Field            | Notes                                                        |
+|-----:|------------------|--------------------------------------------------------------|
+| 8    | `capture_ts`     | Echo of the `VIDEO_FRAME` header timestamp                   |
+| 8    | `received_ts`    | Last payload byte read                                       |
+| 8    | `decoded_ts`     | Decoder output buffer available                              |
+| 8    | `rendered_ts`    | Frame shown on the panel (Android `OnFrameRenderedListener`) |
 
-Clients may sample (e.g. every Nth frame) to limit overhead.
+All four are on the **host clock**. The client converts its own timestamps using the offset
+from `PING`/`PONG` (it pings the host periodically and keeps the minimum-RTT sample). A value of
+0 means unknown. Clients may sample (e.g. every Nth frame) to limit overhead.
 
 ## Session flow
 

@@ -30,7 +30,7 @@ bool FindStartCode(std::span<const uint8_t> d, size_t from, size_t& pos, size_t&
 
 } // namespace
 
-std::vector<Nal> SplitH264(std::span<const uint8_t> data)
+std::vector<Nal> Split(std::span<const uint8_t> data, Codec codec)
 {
     std::vector<Nal> nals;
     size_t pos = 0;
@@ -54,7 +54,11 @@ std::vector<Nal> SplitH264(std::span<const uint8_t> data)
         Nal nal;
         nal.offset = pos;
         nal.size = nextPos - pos;
-        nal.type = payload < data.size() ? static_cast<uint8_t>(data[payload] & 0x1F) : 0;
+        if (payload < data.size())
+        {
+            nal.type = codec == Codec::Hevc ? static_cast<uint8_t>((data[payload] >> 1) & 0x3F)
+                                            : static_cast<uint8_t>(data[payload] & 0x1F);
+        }
         nals.push_back(nal);
 
         if (!more)
@@ -67,34 +71,39 @@ std::vector<Nal> SplitH264(std::span<const uint8_t> data)
     return nals;
 }
 
-SplitAccessUnit SeparateParameterSets(std::span<const uint8_t> accessUnit)
+SplitAccessUnit SeparateParameterSets(std::span<const uint8_t> accessUnit, Codec codec)
 {
+    const bool hevc = codec == Codec::Hevc;
+    const auto isSps = [&](uint8_t t) { return hevc ? t == kHevcNalSps : t == kNalSps; };
+    const auto isParameterSet = [&](uint8_t t) {
+        return hevc ? (t == kHevcNalVps || t == kHevcNalSps || t == kHevcNalPps) : (t == kNalSps || t == kNalPps);
+    };
+    // HEVC IRAP pictures (BLA/IDR/CRA) are types 16..21.
+    const auto isKeyframe = [&](uint8_t t) { return hevc ? (t >= 16 && t <= 21) : t == kNalIdr; };
+
     SplitAccessUnit out;
     out.frame.reserve(accessUnit.size());
-    const auto nals = SplitH264(accessUnit);
+    const auto nals = Split(accessUnit, codec);
 
-    // Some encoders (Intel QSV) repeat a lone PPS on ordinary frames. Only a full SPS+PPS set is
-    // worth a CODEC_CONFIG message; a lone PPS stays inline, which decoders handle fine.
+    // Some encoders (Intel QSV) repeat a lone PPS on ordinary frames. Only a full set including
+    // the SPS is worth a CODEC_CONFIG message; a lone PPS stays inline, which decoders handle fine.
     bool hasSps = false;
     for (const Nal& nal : nals)
     {
-        hasSps = hasSps || nal.type == kNalSps;
+        hasSps = hasSps || isSps(nal.type);
     }
 
     for (const Nal& nal : nals)
     {
         const auto bytes = accessUnit.subspan(nal.offset, nal.size);
-        if (hasSps && (nal.type == kNalSps || nal.type == kNalPps))
+        if (hasSps && isParameterSet(nal.type))
         {
             out.codecConfig.insert(out.codecConfig.end(), bytes.begin(), bytes.end());
         }
         else
         {
             out.frame.insert(out.frame.end(), bytes.begin(), bytes.end());
-            if (nal.type == kNalIdr)
-            {
-                out.keyframe = true;
-            }
+            out.keyframe = out.keyframe || isKeyframe(nal.type);
         }
     }
     return out;

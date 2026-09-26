@@ -141,7 +141,7 @@ HRESULT MfH264Encoder::Initialize(ID3D11Device* device, LUID adapterLuid, const 
     }
 
     MFT_REGISTER_TYPE_INFO input{MFMediaType_Video, MFVideoFormat_NV12};
-    MFT_REGISTER_TYPE_INFO output{MFMediaType_Video, MFVideoFormat_H264};
+    MFT_REGISTER_TYPE_INFO output{MFMediaType_Video, settings.hevc ? MFVideoFormat_HEVC : MFVideoFormat_H264};
     ComPtr<IMFAttributes> enumAttributes;
     MFCreateAttributes(&enumAttributes, 1);
     enumAttributes->SetBlob(MFT_ENUM_ADAPTER_LUID, reinterpret_cast<const UINT8*>(&adapterLuid), sizeof(adapterLuid));
@@ -253,6 +253,9 @@ HRESULT MfH264Encoder::ConfigureCodecApi(const EncoderSettings& settings)
                                      eAVEncCommonRateControlMode_CBR)},
         {L"MeanBitRate", SetUint(m_codecApi.Get(), CODECAPI_AVEncCommonMeanBitRate, settings.bitrateKbps * 1000)},
         {L"BPictureCount", SetUint(m_codecApi.Get(), CODECAPI_AVEncMPVDefaultBPictureCount, 0)},
+        // One reference frame => SPS max_dec_frame_buffering 1. Decoders that size their output
+        // queue from the DPB (MediaTek) otherwise hold frames back before displaying them.
+        {L"MaxNumRefFrame", SetUint(m_codecApi.Get(), CODECAPI_AVEncVideoMaxNumRefFrame, 1)},
         // 0 = fastest preset; latency matters more than the last few percent of compression.
         {L"QualityVsSpeed", SetUint(m_codecApi.Get(), CODECAPI_AVEncCommonQualityVsSpeed, settings.qualityVsSpeed)},
         // Long GOP: TCP is lossless, so IDRs are only needed at start and on client request.
@@ -273,13 +276,14 @@ HRESULT MfH264Encoder::SetMediaTypes(const EncoderSettings& settings)
     ComPtr<IMFMediaType> out;
     MFCreateMediaType(&out);
     out->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
-    out->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_H264);
+    out->SetGUID(MF_MT_SUBTYPE, settings.hevc ? MFVideoFormat_HEVC : MFVideoFormat_H264);
     out->SetUINT32(MF_MT_AVG_BITRATE, settings.bitrateKbps * 1000);
     MFSetAttributeSize(out.Get(), MF_MT_FRAME_SIZE, settings.width, settings.height);
     MFSetAttributeRatio(out.Get(), MF_MT_FRAME_RATE, settings.fps, 1);
     MFSetAttributeRatio(out.Get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
     out->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
-    out->SetUINT32(MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_High);
+    out->SetUINT32(MF_MT_MPEG2_PROFILE, settings.hevc ? static_cast<UINT32>(eAVEncH265VProfile_Main_420_8)
+                                                      : static_cast<UINT32>(eAVEncH264VProfile_High));
     out->SetUINT32(MF_MT_VIDEO_NOMINAL_RANGE, MFNominalRange_16_235);
     out->SetUINT32(MF_MT_YUV_MATRIX, MFVideoTransferMatrix_BT709);
     out->SetUINT32(MF_MT_VIDEO_PRIMARIES, MFVideoPrimaries_BT709);

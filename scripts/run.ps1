@@ -6,7 +6,9 @@
   1. Sets up `adb reverse tcp:PORT tcp:PORT` so 127.0.0.1:PORT on the tablet reaches the PC.
   2. Optionally (-Install) installs the debug APK.
   3. Launches the DeuxDisplay app on the tablet.
-  4. Runs DeuxDisplayHost --serve in this console (Ctrl+C to stop; the monitor unplugs itself).
+  4. Runs DeuxDisplayHost --serve in this console (Ctrl+C to stop; the monitor unplugs itself),
+     re-applying the adb reverse tunnel whenever it disappears (e.g. another tool restarts the
+     adb server).
 
   No admin rights needed. The driver must already be installed (scripts/install-driver.ps1).
 #>
@@ -17,7 +19,11 @@ param(
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Release',
     [switch]$Install,
-    [int]$BitrateKbps = 30000
+    [int]$BitrateKbps = 30000,
+    [int]$MaxFps = 60,
+    [string]$MaxStreamSize, # e.g. 2560x1440: encode at most this size (fits the tablet's decoder)
+    [ValidateSet('auto', 'h264', 'hevc')]
+    [string]$Codec = 'auto'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -55,4 +61,27 @@ if ($Install) {
 & $adb @adbArgs shell am start -n io.github.zengarv.deuxdisplay/.MainActivity | Out-Null
 Write-Host 'Launched DeuxDisplay on the tablet. Starting host (Ctrl+C to stop)...'
 
-& $HostExe --serve --port $Port --bitrate $BitrateKbps
+$hostArgs = @('--serve', '--port', $Port, '--bitrate', $BitrateKbps, '--max-fps', $MaxFps, '--codec', $Codec)
+if ($MaxStreamSize) { $hostArgs += @('--max-stream-size', $MaxStreamSize) }
+$hostProcess = Start-Process -FilePath $HostExe -NoNewWindow -PassThru -ArgumentList $hostArgs
+try {
+    # The tablet may be unplugged or the adb server restarted at any time: keep retrying quietly.
+    $ErrorActionPreference = 'Continue'
+    $wasMissing = $false
+    while (-not $hostProcess.HasExited) {
+        Start-Sleep -Seconds 2
+        $reverses = cmd /c "`"$adb`" $($adbArgs -join ' ') reverse --list 2>nul"
+        if (-not ($reverses -match "tcp:$Port")) {
+            cmd /c "`"$adb`" $($adbArgs -join ' ') reverse tcp:$Port tcp:$Port >nul 2>nul"
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host 'adb reverse tunnel (re)established'
+                $wasMissing = $false
+            } elseif (-not $wasMissing) {
+                Write-Host 'Tablet not reachable over adb; waiting for it to reconnect...'
+                $wasMissing = $true
+            }
+        }
+    }
+} finally {
+    if (-not $hostProcess.HasExited) { Stop-Process -Id $hostProcess.Id }
+}

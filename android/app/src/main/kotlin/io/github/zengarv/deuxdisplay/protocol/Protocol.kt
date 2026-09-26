@@ -16,6 +16,9 @@ object Protocol {
 
     const val FLAG_KEYFRAME: Int = 1 shl 0
     const val FLAG_CODEC_CONFIG: Int = 1 shl 1
+
+    /** Re-encode of the previous image, sent to push the real frame out of one-behind decoders. */
+    const val FLAG_REPEAT: Int = 1 shl 2
 }
 
 object MessageType {

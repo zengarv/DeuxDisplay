@@ -32,11 +32,14 @@ struct Pipeline
     capture::DesktopDuplicator duplicator;
     render::FrameComposer composer;
     encode::MfH264Encoder encoder;
-    UINT width = 0;
+    UINT width = 0; // desktop (virtual monitor) size
     UINT height = 0;
+    UINT streamWidth = 0; // encoded size
+    UINT streamHeight = 0;
+    bool hevc = false;
     UINT fps = 60;
 
-    HRESULT Initialize(const ServeOptions& options)
+    HRESULT Initialize(const ServeOptions& options, bool preferHevc)
     {
         const unsigned bitrateKbps = options.bitrateKbps;
         encoder.Shutdown();
@@ -70,8 +73,18 @@ struct Pipeline
         {
             fps = 60;
         }
+        fps = std::min(fps, options.maxFps); // the encoder's rate control budgets per frame
 
-        hr = composer.Initialize(device.Get(), width, height);
+        double scale = 1.0;
+        if (options.maxStreamWidth && options.maxStreamHeight)
+        {
+            scale = std::min({1.0, static_cast<double>(options.maxStreamWidth) / width,
+                              static_cast<double>(options.maxStreamHeight) / height});
+        }
+        streamWidth = static_cast<UINT>(width * scale) & ~1u;
+        streamHeight = static_cast<UINT>(height * scale) & ~1u;
+
+        hr = composer.Initialize(device.Get(), width, height, streamWidth, streamHeight);
         if (FAILED(hr))
         {
             return hr;
@@ -79,19 +92,28 @@ struct Pipeline
 
         DXGI_ADAPTER_DESC1 adapterDesc{};
         output.adapter->GetDesc1(&adapterDesc);
-        hr = encoder.Initialize(device.Get(), adapterDesc.AdapterLuid, {width, height, fps, bitrateKbps});
+        encode::EncoderSettings settings{streamWidth, streamHeight, fps, bitrateKbps};
+        settings.hevc = preferHevc;
+        hr = encoder.Initialize(device.Get(), adapterDesc.AdapterLuid, settings);
+        if (FAILED(hr) && preferHevc)
+        {
+            Log(L"pipeline: HEVC encoder unavailable (0x%08lX), using H.264", Hr(hr));
+            settings.hevc = false;
+            hr = encoder.Initialize(device.Get(), adapterDesc.AdapterLuid, settings);
+        }
         if (FAILED(hr))
         {
             return hr;
         }
-        Log(L"pipeline: %s %ux%u@%u, encoder \"%s\"", output.deviceName.c_str(), width, height, fps,
-            encoder.Name().c_str());
+        hevc = settings.hevc;
+        Log(L"pipeline: %s %ux%u@%u -> stream %ux%u %s, encoder \"%s\"", output.deviceName.c_str(), width, height,
+            fps, streamWidth, streamHeight, hevc ? L"HEVC" : L"H.264", encoder.Name().c_str());
         return S_OK;
     }
 };
 
 // Turns what the client reported into a monitor description for the driver.
-driver::PlugRequest PlugRequestFor(const protocol::Hello& hello)
+driver::PlugRequest PlugRequestFor(const protocol::Hello& hello, unsigned maxFps)
 {
     uint16_t width = hello.widthPx;
     uint16_t height = hello.heightPx;
@@ -116,18 +138,57 @@ driver::PlugRequest PlugRequestFor(const protocol::Hello& hello)
     {
         hz = 60;
     }
-    r.refreshHz[0] = static_cast<uint16_t>(hz);
-    if (hz != 60)
+    // Prefer a mode no faster than we'll stream; keep the client's rate available as an option.
+    const long preferred = std::min<long>(hz, static_cast<long>(maxFps));
+    r.refreshHz[0] = static_cast<uint16_t>(preferred);
+    if (hz != preferred)
     {
-        r.refreshHz[1] = 60;
+        r.refreshHz[1] = static_cast<uint16_t>(hz);
     }
     return r;
 }
 
+// Sleeps with ~0.5 ms precision (plain Sleep() rounds up to the 15.6 ms timer tick).
+class PreciseSleeper
+{
+  public:
+    PreciseSleeper()
+        : m_timer(CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS))
+    {
+    }
+    ~PreciseSleeper()
+    {
+        if (m_timer)
+        {
+            CloseHandle(m_timer);
+        }
+    }
+    PreciseSleeper(const PreciseSleeper&) = delete;
+    PreciseSleeper& operator=(const PreciseSleeper&) = delete;
+
+    void SleepMicros(uint64_t us)
+    {
+        LARGE_INTEGER due;
+        due.QuadPart = -static_cast<LONGLONG>(us * 10); // relative, 100 ns units
+        if (m_timer && SetWaitableTimerEx(m_timer, &due, 0, nullptr, nullptr, nullptr, 0))
+        {
+            WaitForSingleObject(m_timer, INFINITE);
+        }
+        else
+        {
+            Sleep(static_cast<DWORD>((us + 999) / 1000));
+        }
+    }
+
+  private:
+    HANDLE m_timer;
+};
+
 bool SendConfig(transport::Connection& conn, const Pipeline& p, unsigned bitrateKbps)
 {
-    protocol::Config config{protocol::kVersion, protocol::Codec::H264, static_cast<uint16_t>(p.width),
-                            static_cast<uint16_t>(p.height), p.fps * 1000, bitrateKbps};
+    protocol::Config config{protocol::kVersion, p.hevc ? protocol::Codec::Hevc : protocol::Codec::H264,
+                            static_cast<uint16_t>(p.streamWidth),
+                            static_cast<uint16_t>(p.streamHeight), p.fps * 1000, bitrateKbps};
     const auto payload = protocol::SerializeConfig(config);
     return conn.Send(MessageType::Config, 0, NowMicros(), payload);
 }
@@ -192,6 +253,57 @@ struct SessionStats
     }
 };
 
+// End-to-end timings reported by the client (FRAME_STATS, host clock), logged every 2 s.
+struct ClientStats
+{
+    uint64_t windowStartUs = 0;
+    std::vector<double> received, decoded, rendered; // ms after present
+
+    static double Percentile(std::vector<double>& v, double p)
+    {
+        if (v.empty())
+        {
+            return 0;
+        }
+        std::sort(v.begin(), v.end());
+        return v[std::min(v.size() - 1, static_cast<size_t>(p * v.size()))];
+    }
+
+    void Add(const protocol::FrameStats& s)
+    {
+        if (s.captureTs == 0 || s.receivedTs < s.captureTs)
+        {
+            return;
+        }
+        received.push_back((s.receivedTs - s.captureTs) / 1000.0);
+        if (s.decodedTs >= s.captureTs)
+        {
+            decoded.push_back((s.decodedTs - s.captureTs) / 1000.0);
+        }
+        if (s.renderedTs >= s.captureTs)
+        {
+            rendered.push_back((s.renderedTs - s.captureTs) / 1000.0);
+        }
+
+        const uint64_t now = NowMicros();
+        if (windowStartUs == 0)
+        {
+            windowStartUs = now;
+        }
+        if (now - windowStartUs >= 2'000'000)
+        {
+            Log(L"client: present->received p50 %.1f p95 %.1f | ->decoded p50 %.1f p95 %.1f | "
+                L"->on screen p50 %.1f p95 %.1f ms (%zu frames)",
+                Percentile(received, 0.5), Percentile(received, 0.95), Percentile(decoded, 0.5),
+                Percentile(decoded, 0.95), Percentile(rendered, 0.5), Percentile(rendered, 0.95), received.size());
+            received.clear();
+            decoded.clear();
+            rendered.clear();
+            windowStartUs = now;
+        }
+    }
+};
+
 void RunSession(transport::Connection& conn, const ServeOptions& options, VirtualDisplay& display)
 {
     protocol::Header header;
@@ -202,7 +314,7 @@ void RunSession(transport::Connection& conn, const ServeOptions& options, Virtua
         return;
     }
     const auto hello = protocol::ParseHello(payload);
-    if (!hello || !(hello->codecs & protocol::kCodecMaskH264))
+    if (!hello || !(hello->codecs & (protocol::kCodecMaskH264 | protocol::kCodecMaskHevc)))
     {
         Log(L"session: unsupported client (bad HELLO or no H.264)");
         conn.Send(MessageType::Bye, 0, NowMicros(), {});
@@ -220,7 +332,7 @@ void RunSession(transport::Connection& conn, const ServeOptions& options, Virtua
 
     if (options.outputName.empty())
     {
-        const auto request = PlugRequestFor(*hello);
+        const auto request = PlugRequestFor(*hello, options.maxFps);
         HRESULT plugged = display.Plug(request);
         if (FAILED(plugged))
         {
@@ -243,7 +355,10 @@ void RunSession(transport::Connection& conn, const ServeOptions& options, Virtua
     }
 
     Pipeline pipeline;
-    HRESULT hr = pipeline.Initialize(options);
+    const bool clientHevc = (hello->codecs & protocol::kCodecMaskHevc) != 0;
+    const bool clientH264 = (hello->codecs & protocol::kCodecMaskH264) != 0;
+    const bool preferHevc = clientHevc && (options.codec != L"h264" || !clientH264);
+    HRESULT hr = pipeline.Initialize(options, preferHevc);
     if (FAILED(hr))
     {
         Log(L"session: pipeline init failed 0x%08lX", Hr(hr));
@@ -260,10 +375,17 @@ void RunSession(transport::Connection& conn, const ServeOptions& options, Virtua
     std::thread reader([&] {
         protocol::Header h;
         std::vector<uint8_t> p;
+        ClientStats clientStats;
         while (!stop && conn.Receive(h, p))
         {
             switch (h.type)
             {
+            case MessageType::FrameStats:
+                if (auto s = protocol::ParseFrameStats(p))
+                {
+                    clientStats.Add(*s);
+                }
+                break;
             case MessageType::RequestKeyframe:
                 keyframeRequested = true;
                 break;
@@ -278,7 +400,7 @@ void RunSession(transport::Connection& conn, const ServeOptions& options, Virtua
                 stop = true;
                 break;
             default:
-                break; // FRAME_STATS etc. are consumed by M4 tooling
+                break;
             }
         }
         stop = true;
@@ -290,8 +412,9 @@ void RunSession(transport::Connection& conn, const ServeOptions& options, Virtua
     bool haveFrame = false;
 
     FrameTimes times;
-    auto sendEncoded = [&](const encode::EncodedFrame& frame) {
-        auto split = annexb::SeparateParameterSets(frame.data);
+    auto sendEncoded = [&](const encode::EncodedFrame& frame, uint8_t extraFlags = 0) {
+        auto split = annexb::SeparateParameterSets(frame.data,
+                                                   pipeline.hevc ? annexb::Codec::Hevc : annexb::Codec::H264);
         if (!split.codecConfig.empty() && split.codecConfig != lastCodecConfig)
         {
             if (!conn.Send(MessageType::VideoFrame, protocol::video_flags::kCodecConfig, frame.timestampUs,
@@ -301,7 +424,8 @@ void RunSession(transport::Connection& conn, const ServeOptions& options, Virtua
             }
             lastCodecConfig = std::move(split.codecConfig);
         }
-        const uint8_t flags = (split.keyframe || frame.keyframe) ? protocol::video_flags::kKeyframe : 0;
+        const uint8_t flags =
+            static_cast<uint8_t>(((split.keyframe || frame.keyframe) ? protocol::video_flags::kKeyframe : 0) | extraFlags);
         if (!conn.Send(MessageType::VideoFrame, flags, frame.timestampUs, split.frame))
         {
             return false;
@@ -313,8 +437,20 @@ void RunSession(transport::Connection& conn, const ServeOptions& options, Virtua
         return true;
     };
 
+    PreciseSleeper sleeper;
+    const uint64_t frameIntervalUs = 1'000'000 / std::max(1u, options.maxFps);
+    uint64_t nextFrameUs = 0;
+
     while (!stop)
     {
+        // Pace to maxFps. While we wait, Desktop Duplication keeps accumulating updates, so the
+        // next acquired frame is the newest desktop state rather than a queued stale one.
+        const uint64_t nowUs = NowMicros();
+        if (nowUs < nextFrameUs)
+        {
+            sleeper.SleepMicros(nextFrameUs - nowUs);
+        }
+
         if (keyframeRequested.exchange(false))
         {
             pipeline.encoder.RequestKeyframe();
@@ -350,7 +486,7 @@ void RunSession(transport::Connection& conn, const ServeOptions& options, Virtua
             const UINT oldWidth = pipeline.width;
             const UINT oldHeight = pipeline.height;
             const UINT oldFps = pipeline.fps;
-            while (!stop && FAILED(pipeline.Initialize(options)))
+            while (!stop && FAILED(pipeline.Initialize(options, preferHevc)))
             {
                 Sleep(250);
             }
@@ -372,6 +508,7 @@ void RunSession(transport::Connection& conn, const ServeOptions& options, Virtua
 
         times.acquired = NowMicros();
         times.present = frame.presentQpc ? QpcToMicros(frame.presentQpc) : times.acquired;
+        nextFrameUs = times.acquired + frameIntervalUs;
         ComPtr<ID3D11Texture2D> nv12;
         hr = pipeline.composer.Compose(frame.desktop, pipeline.duplicator.Pointer(), &nv12);
         pipeline.duplicator.ReleaseFrame();
@@ -396,6 +533,23 @@ void RunSession(transport::Connection& conn, const ServeOptions& options, Virtua
             {
                 stop = true;
                 break;
+            }
+        }
+
+        if (options.repeatFrames && !stop && !encoded.empty())
+        {
+            // Same image again: encodes to a tiny all-skip frame that pushes the real one out of
+            // "one frame behind" decoders right away (see REPEAT in docs/wire-protocol.md).
+            if (SUCCEEDED(pipeline.encoder.Encode(nv12.Get(), times.present + 1, encoded)))
+            {
+                for (const auto& f : encoded)
+                {
+                    if (!sendEncoded(f, protocol::video_flags::kRepeat))
+                    {
+                        stop = true;
+                        break;
+                    }
+                }
             }
         }
         stats.MaybeLog();

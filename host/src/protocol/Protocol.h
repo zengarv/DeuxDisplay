@@ -34,6 +34,7 @@ namespace video_flags
 {
 inline constexpr uint8_t kKeyframe = 1u << 0;
 inline constexpr uint8_t kCodecConfig = 1u << 1;
+inline constexpr uint8_t kRepeat = 1u << 2; // identical to the previous frame; flushes decoder pipelines
 } // namespace video_flags
 
 enum class Codec : uint8_t
