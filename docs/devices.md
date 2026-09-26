@@ -19,5 +19,10 @@ selection. Don't guess them.
 | HW HEVC decoder    | `c2.mtk.hevc.decoder`                                          |
 | SW fallbacks       | `c2.android.avc.decoder`, `c2.android.hevc.decoder`            |
 
-Open questions to confirm from the app at runtime (M3): whether `c2.mtk.avc.decoder`
-advertises `FEATURE_LowLatency`, and its max supported size/frame rate at 2408×1720.
+Observed at runtime (M3, 2026-09-27):
+- `c2.mtk.avc.decoder` does **not** advertise `FEATURE_LowLatency`. The app still sets
+  `KEY_PRIORITY=0` and MediaTek's `vdec-lowlatency=1` hint, and configure accepts them.
+- Decodes 2408×1720 High-profile H.264 at 60+ fps. Output format: BT.709 (`color-standard=1`),
+  limited range (`color-range=2`), SDR transfer.
+- The app's `HELLO`: 2408×1720, 60 Hz, `densityDpi` 360, physical 260.047 × 260.268 dpi,
+  which gives a 235 × 168 mm virtual monitor. Windows picks 200% scaling.
