@@ -114,7 +114,7 @@ class StreamClient(
                     "Connecting over Wi-Fi (${wifi.ssid})…\nIs DeuxDisplayHost running on your PC?"
                 },
             )
-            var retryDelayMs = RETRY_DELAY_MS
+            var retryDelayMs = if (wifi == null) USB_RETRY_DELAY_MS else RETRY_DELAY_MS
             try {
                 session()
             } catch (e: IOException) {
@@ -298,6 +298,10 @@ class StreamClient(
         const val DEFAULT_PORT = 27183
         private const val CONNECT_TIMEOUT_MS = 1000
         private const val RETRY_DELAY_MS = 1000L
+
+        // Over USB a failed connect is an instant local refusal, so poll quickly: the display
+        // appears within a quarter second of the host setting up the adb tunnel.
+        private const val USB_RETRY_DELAY_MS = 250L
         private const val REJECTED_RETRY_DELAY_MS = 5000L
         private const val NETWORK_TIMEOUT_MS = 35_000L
         private const val PING_INTERVAL_MS = 500L
