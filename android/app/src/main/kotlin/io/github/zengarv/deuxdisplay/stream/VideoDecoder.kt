@@ -217,6 +217,15 @@ class VideoDecoder(
                 !info.isEncoder && isHardware(info) && !info.name.endsWith(".secure") &&
                     info.supportedTypes.any { it.equals(mime, ignoreCase = true) }
             }
+
+        /** True if the decoder we'd pick for [mime] accepts a [width]x[height] stream. */
+        fun supportsSize(mime: String, width: Int, height: Int): Boolean {
+            val name = runCatching { pickDecoder(mime).name }.getOrNull() ?: return false
+            val info = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.firstOrNull { it.name == name }
+                ?: return false
+            return info.getCapabilitiesForType(mime).videoCapabilities?.isSizeSupported(width, height) == true
+        }
+
         private const val INPUT_TIMEOUT_US = 50_000L
         private const val OUTPUT_TIMEOUT_US = 100_000L
         private const val MAX_TRACKED_FRAMES = 256

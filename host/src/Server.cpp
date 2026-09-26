@@ -112,8 +112,50 @@ struct Pipeline
     }
 };
 
+// The stream format the user picked on the client (HELLO mode_* fields); 0 = host decides.
+struct RequestedMode
+{
+    uint16_t width = 0;
+    uint16_t height = 0;
+    unsigned hz = 0;
+};
+
+RequestedMode RequestedModeFor(const protocol::Hello& hello)
+{
+    RequestedMode mode;
+    if (hello.modeWidthPx && hello.modeHeightPx)
+    {
+        driver::PlugRequest probe;
+        probe.width = std::max(hello.modeWidthPx, hello.modeHeightPx); // landscape only in v1
+        probe.height = std::min(hello.modeWidthPx, hello.modeHeightPx);
+        probe.refreshHz[0] = 60;
+        if (driver::IsValidPlugRequest(probe))
+        {
+            mode.width = probe.width;
+            mode.height = probe.height;
+        }
+        else
+        {
+            Log(L"session: ignoring requested size %ux%u", hello.modeWidthPx, hello.modeHeightPx);
+        }
+    }
+    if (hello.modeRefreshMilliHz)
+    {
+        const long hz = std::lround(hello.modeRefreshMilliHz / 1000.0);
+        if (hz >= 24 && hz <= 240)
+        {
+            mode.hz = static_cast<unsigned>(hz);
+        }
+        else
+        {
+            Log(L"session: ignoring requested refresh rate %.3f Hz", hello.modeRefreshMilliHz / 1000.0);
+        }
+    }
+    return mode;
+}
+
 // Turns what the client reported into a monitor description for the driver.
-driver::PlugRequest PlugRequestFor(const protocol::Hello& hello, unsigned maxFps)
+driver::PlugRequest PlugRequestFor(const protocol::Hello& hello, unsigned maxFps, const RequestedMode& mode)
 {
     uint16_t width = hello.widthPx;
     uint16_t height = hello.heightPx;
@@ -128,10 +170,19 @@ driver::PlugRequest PlugRequestFor(const protocol::Hello& hello, unsigned maxFps
     }
 
     driver::PlugRequest r;
-    r.width = static_cast<uint16_t>(width & ~1u);
-    r.height = static_cast<uint16_t>(height & ~1u);
+    // Physical size always comes from the native panel, so Windows scaling stays right for the
+    // real screen even when the user picked a lower stream resolution.
     r.widthMm = static_cast<uint16_t>(std::lround(width / xdpi * 25.4));
     r.heightMm = static_cast<uint16_t>(std::lround(height / ydpi * 25.4));
+    r.width = mode.width ? mode.width : static_cast<uint16_t>(width & ~1u);
+    r.height = mode.height ? mode.height : static_cast<uint16_t>(height & ~1u);
+
+    if (mode.hz)
+    {
+        // Only the picked rate, so Windows can't choose another one.
+        r.refreshHz[0] = static_cast<uint16_t>(mode.hz);
+        return r;
+    }
 
     long hz = std::lround(hello.refreshMilliHz / 1000.0);
     if (hz < 24 || hz > 240)
@@ -304,7 +355,7 @@ struct ClientStats
     }
 };
 
-void RunSession(transport::Connection& conn, const ServeOptions& options, VirtualDisplay& display)
+void RunSession(transport::Connection& conn, const ServeOptions& serveOptions, VirtualDisplay& display)
 {
     protocol::Header header;
     std::vector<uint8_t> payload;
@@ -323,6 +374,23 @@ void RunSession(transport::Connection& conn, const ServeOptions& options, Virtua
     Log(L"session: client \"%S\" %ux%u @ %.1f Hz, %u dpi", hello->deviceName.c_str(), hello->widthPx,
         hello->heightPx, hello->refreshMilliHz / 1000.0, hello->densityDpi);
 
+    // A mode picked on the client wins over the command-line limits: stream exactly that.
+    ServeOptions options = serveOptions;
+    const RequestedMode mode = RequestedModeFor(*hello);
+    if (mode.width)
+    {
+        options.maxStreamWidth = 0;
+        options.maxStreamHeight = 0;
+    }
+    if (mode.hz)
+    {
+        options.maxFps = mode.hz;
+    }
+    if (mode.width || mode.hz)
+    {
+        Log(L"session: client requested %ux%u @ %u Hz (0 = host decides)", mode.width, mode.height, mode.hz);
+    }
+
     // Declared before the pipeline so the monitor is unplugged after capture/encode shut down.
     struct UnplugOnExit
     {
@@ -332,8 +400,17 @@ void RunSession(transport::Connection& conn, const ServeOptions& options, Virtua
 
     if (options.outputName.empty())
     {
-        const auto request = PlugRequestFor(*hello, options.maxFps);
+        auto request = PlugRequestFor(*hello, options.maxFps, mode);
         HRESULT plugged = display.Plug(request);
+        if (FAILED(plugged) && (mode.width || mode.hz))
+        {
+            // E.g. the pixel clock doesn't fit an EDID timing. Streaming something beats a client
+            // stuck reconnecting; CONFIG tells it what it actually gets.
+            Log(L"session: plugging the requested mode failed 0x%08lX, falling back to the default", Hr(plugged));
+            options = serveOptions;
+            request = PlugRequestFor(*hello, options.maxFps, {});
+            plugged = display.Plug(request);
+        }
         if (FAILED(plugged))
         {
             Log(L"session: plugging the virtual monitor failed 0x%08lX. Is the driver installed? "

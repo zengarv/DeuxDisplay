@@ -115,7 +115,7 @@ std::optional<Header> DecodeHeader(std::span<const uint8_t, kHeaderSize> in)
 
 std::vector<uint8_t> SerializeHello(const Hello& msg)
 {
-    Writer w(24 + msg.deviceName.size());
+    Writer w(38 + msg.deviceName.size());
     w.Put(kMagic);
     w.Put(msg.protocolVersion);
     w.Put(msg.widthPx);
@@ -126,6 +126,9 @@ std::vector<uint8_t> SerializeHello(const Hello& msg)
     w.PutString(msg.deviceName);
     w.Put(msg.xdpiMilli);
     w.Put(msg.ydpiMilli);
+    w.Put(msg.modeWidthPx);
+    w.Put(msg.modeHeightPx);
+    w.Put(msg.modeRefreshMilliHz);
     return w.Take();
 }
 
@@ -147,6 +150,16 @@ std::optional<Hello> ParseHello(std::span<const uint8_t> payload)
     {
         msg.xdpiMilli = xdpi;
         msg.ydpiMilli = ydpi;
+
+        uint16_t modeWidth = 0;
+        uint16_t modeHeight = 0;
+        uint32_t modeRefresh = 0;
+        if (r.Get(modeWidth) && r.Get(modeHeight) && r.Get(modeRefresh))
+        {
+            msg.modeWidthPx = modeWidth;
+            msg.modeHeightPx = modeHeight;
+            msg.modeRefreshMilliHz = modeRefresh;
+        }
     }
     return msg;
 }

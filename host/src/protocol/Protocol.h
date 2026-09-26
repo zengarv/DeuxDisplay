@@ -65,6 +65,10 @@ struct Hello
     std::string deviceName;
     uint32_t xdpiMilli = 0; // optional, 0 = not sent
     uint32_t ydpiMilli = 0;
+    // Optional stream mode picked by the user; 0 = host decides.
+    uint16_t modeWidthPx = 0;
+    uint16_t modeHeightPx = 0;
+    uint32_t modeRefreshMilliHz = 0;
 };
 
 struct Config
