@@ -43,7 +43,7 @@ Senders must write header and payload with a single write/send call (see latency
 | `0x21` | `PONG`            | either           | Reply to `PING`                                |
 | `0x22` | `FRAME_STATS`     | client → host    | Per-frame receive/decode/render timestamps     |
 | `0x30` | `CURSOR`          | host → client    | Reserved (cursor overlay, post-v1)             |
-| `0x40` | `INPUT`           | client → host    | Reserved (touch/pen passthrough, M5)           |
+| `0x40` | `INPUT`           | client → host    | Touch input on the stream                      |
 
 ### `HELLO` (client → host)
 
@@ -143,6 +143,33 @@ All four are on the **host clock**. The client converts its own timestamps using
 from `PING`/`PONG` (it pings the host periodically and keeps the minimum-RTT sample). A value of
 0 means unknown. Clients may sample (e.g. every Nth frame) to limit overhead.
 
+### `INPUT` (client → host)
+
+Touch on the client, forwarded so the host can inject it on the virtual display. The header
+`timestamp` is the client send time.
+
+| Size | Field      | Notes                                                           |
+|-----:|------------|-----------------------------------------------------------------|
+| 1    | `kind`     | `1` = touch frame. Hosts ignore kinds they don't know            |
+| 1    | `count`    | Contacts that follow, 1–10                                      |
+| 2    | `reserved` | 0                                                               |
+
+Then `count` contacts, 8 bytes each:
+
+| Size | Field      | Notes                                                              |
+|-----:|------------|--------------------------------------------------------------------|
+| 1    | `id`       | Contact slot, 0–9. Stable from down to up                          |
+| 1    | `action`   | `0` down, `1` move, `2` up, `3` cancel                             |
+| 2    | `x`        | `u16`: 0 = left edge of the video frame, 65535 = right edge        |
+| 2    | `y`        | `u16`: 0 = top edge, 65535 = bottom edge                           |
+| 2    | `pressure` | `u16`, 0–1024; 0 = unknown                                         |
+
+A touch frame carries **every** contact currently on the screen, like Android's `MotionEvent`
+and Windows touch injection. Coordinates are normalized to the video frame, which the client shows
+stretched over its whole surface, so they don't depend on the stream size. The host keeps
+per-contact state: a contact that is active on the host but missing from a frame is lifted, and
+all contacts are lifted when the session ends, so a dropped message can't leave a finger stuck.
+
 ## Session flow
 
 ```
@@ -154,6 +181,7 @@ client                              host
   | <--- VIDEO_FRAME (KEYFRAME) ----  |
   | <--- VIDEO_FRAME ... -----------  |
   | ---- PING / FRAME_STATS ------->  |
+  | ---- INPUT (touch) ------------>  |
   | ---- BYE ---------------------->  |
 ```
 

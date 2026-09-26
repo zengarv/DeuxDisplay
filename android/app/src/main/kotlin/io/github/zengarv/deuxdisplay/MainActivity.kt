@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.util.Log
 import android.view.Gravity
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
@@ -25,6 +26,7 @@ import io.github.zengarv.deuxdisplay.stream.ModeOption
 import io.github.zengarv.deuxdisplay.stream.StreamClient
 import io.github.zengarv.deuxdisplay.stream.StreamMode
 import io.github.zengarv.deuxdisplay.stream.StreamModes
+import io.github.zengarv.deuxdisplay.stream.TouchInput
 
 class MainActivity : Activity(), SurfaceHolder.Callback {
 
@@ -54,6 +56,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
 
         val surfaceView = SurfaceView(this)
         surfaceView.holder.addCallback(this)
+        surfaceView.setOnTouchListener(::onSurfaceTouch)
 
         status = TextView(this).apply {
             setTextColor(Color.LTGRAY)
@@ -103,7 +106,20 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
         }
     }
 
-    // Back toggles the stream settings while streaming (touch isn't forwarded to the PC yet).
+    // Touches on the stream go to the PC. The video fills the view, so view coordinates map
+    // straight onto the video frame.
+    private fun onSurfaceTouch(view: View, event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            view.requestUnbufferedDispatch(event) // moves as they happen, not batched per vsync
+        }
+        if (streaming && !settingsOpened) {
+            client?.sendTouch(TouchInput.contacts(event, view.width, view.height))
+        }
+        if (event.actionMasked == MotionEvent.ACTION_UP) view.performClick()
+        return true
+    }
+
+    // Back toggles the stream settings while streaming (touches go to the PC).
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         if (keyCode == KeyEvent.KEYCODE_BACK && streaming) {
             settingsOpened = !settingsOpened

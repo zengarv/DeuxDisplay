@@ -1,6 +1,8 @@
 package io.github.zengarv.deuxdisplay.stream
 
 import android.media.MediaFormat
+import android.os.Handler
+import android.os.HandlerThread
 import android.os.Process
 import android.util.Log
 import android.view.Surface
@@ -13,8 +15,10 @@ import io.github.zengarv.deuxdisplay.protocol.MessageType
 import io.github.zengarv.deuxdisplay.protocol.Protocol
 import io.github.zengarv.deuxdisplay.protocol.ProtocolException
 import io.github.zengarv.deuxdisplay.protocol.Pong
+import io.github.zengarv.deuxdisplay.protocol.TouchContact
 import io.github.zengarv.deuxdisplay.protocol.parsePing
 import io.github.zengarv.deuxdisplay.protocol.serializePing
+import io.github.zengarv.deuxdisplay.protocol.serializeTouchFrame
 import java.io.BufferedInputStream
 import java.io.DataInputStream
 import java.io.IOException
@@ -50,13 +54,33 @@ class StreamClient(
     private var output: OutputStream? = null
     private var frameBuffer = ByteArray(1 shl 20)
 
+    // Touch frames come from the UI thread, which mustn't touch the socket.
+    private var inputThread: HandlerThread? = null
+
+    @Volatile
+    private var inputHandler: Handler? = null
+
     fun start() {
         running = true
+        inputThread = HandlerThread("DeuxDisplay-input", Process.THREAD_PRIORITY_URGENT_DISPLAY).also {
+            it.start()
+            inputHandler = Handler(it.looper)
+        }
         thread = Thread(::run, "DeuxDisplay-net").apply { start() }
+    }
+
+    /** Forwards one touch frame to the host; dropped while not connected. Any thread. */
+    fun sendTouch(contacts: List<TouchContact>) {
+        if (contacts.isEmpty()) return
+        val payload = serializeTouchFrame(contacts)
+        inputHandler?.post { send(MessageType.INPUT, 0, payload) }
     }
 
     fun stop() {
         running = false
+        inputHandler = null
+        inputThread?.quitSafely()
+        inputThread = null
         try {
             socket?.close()
         } catch (e: IOException) {

@@ -24,6 +24,8 @@ struct ServeOptions
     // (MediaTek) output the real frame immediately instead of waiting for the next screen change.
     // Measured on the OnePlus Pad Go: no gain (its decoder holds ~2 frames regardless), so off.
     bool repeatFrames = false;
+    // Inject the client's touches on the streamed display (Windows touch injection).
+    bool touchInput = true;
     std::wstring outputName; // debug: stream this existing output (e.g. \\.\DISPLAY1) instead
 };
 

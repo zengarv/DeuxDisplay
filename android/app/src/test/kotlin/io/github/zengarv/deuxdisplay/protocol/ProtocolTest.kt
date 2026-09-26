@@ -90,4 +90,24 @@ class ProtocolTest {
         val stats = FrameStats(1, 2, 3, 4)
         assertEquals(stats, FrameStats.parse(stats.serialize()))
     }
+
+    @Test
+    fun touchFrameLayoutMatchesSpec() {
+        val contacts = listOf(TouchContact(1, TouchAction.DOWN, 0x1234, 0xABCD, 512))
+        val bytes = serializeTouchFrame(contacts)
+        // Same vector as host/tests/ProtocolTests.cpp.
+        val expected = byteArrayOf(
+            0x01, 0x01, 0x00, 0x00,
+            0x01, 0x00, 0x34, 0x12, 0xCD.toByte(), 0xAB.toByte(), 0x00, 0x02,
+        )
+        assertArrayEquals(expected, bytes)
+        assertEquals(contacts, parseTouchFrame(bytes))
+    }
+
+    @Test(expected = ProtocolException::class)
+    fun touchFrameRejectsBadSlot() {
+        val bytes = serializeTouchFrame(listOf(TouchContact(1, TouchAction.MOVE, 0, 0)))
+        bytes[4] = 10
+        parseTouchFrame(bytes)
+    }
 }

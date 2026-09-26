@@ -95,6 +95,32 @@ struct FrameStats
     uint64_t renderedTs = 0;
 };
 
+inline constexpr uint8_t kInputKindTouch = 1;
+inline constexpr size_t kMaxTouchContacts = 10;
+
+enum class TouchAction : uint8_t
+{
+    Down = 0,
+    Move = 1,
+    Up = 2,
+    Cancel = 3,
+};
+
+struct TouchContact
+{
+    uint8_t id = 0; // slot, < kMaxTouchContacts
+    TouchAction action = TouchAction::Move;
+    uint16_t x = 0; // 0..65535 across the video frame
+    uint16_t y = 0;
+    uint16_t pressure = 0; // 0..1024, 0 = unknown
+};
+
+// INPUT payload of kind kInputKindTouch: every contact currently on the client's screen.
+struct TouchFrame
+{
+    std::vector<TouchContact> contacts;
+};
+
 void EncodeHeader(const Header& header, std::span<uint8_t, kHeaderSize> out);
 
 // Returns nullopt for a malformed header (reserved bits set, oversized payload).
@@ -116,5 +142,9 @@ std::optional<Pong> ParsePong(std::span<const uint8_t> payload);
 
 std::vector<uint8_t> SerializeFrameStats(const FrameStats& msg);
 std::optional<FrameStats> ParseFrameStats(std::span<const uint8_t> payload);
+
+std::vector<uint8_t> SerializeTouchFrame(const TouchFrame& msg);
+// nullopt for other input kinds, bad slots/actions, or a count outside 1..kMaxTouchContacts.
+std::optional<TouchFrame> ParseTouchFrame(std::span<const uint8_t> payload);
 
 } // namespace dd::protocol
