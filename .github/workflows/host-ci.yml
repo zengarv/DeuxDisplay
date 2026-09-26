@@ -25,7 +25,7 @@ jobs:
         run: .\host\x64\${{ matrix.configuration }}\DeuxDisplayHostTests.exe
       - name: Smoke test
         run: .\host\x64\${{ matrix.configuration }}\DeuxDisplayHost.exe --list-outputs
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: matrix.configuration == 'Release'
         with:
           name: DeuxDisplayHost
