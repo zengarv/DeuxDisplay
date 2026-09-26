@@ -92,6 +92,14 @@ HRESULT WifiDirectAp::Start(const std::wstring& ssid, const std::wstring& passph
     }
     if (SUCCEEDED(hr))
     {
+        // Not discoverable as a Wi-Fi Direct peer: the tablet joins as a plain Wi-Fi client. (The
+        // default already; set explicitly. It does not remove the per-beacon gaps measured in
+        // docs/latency-notes.md.)
+        hr = advertisement->put_ListenStateDiscoverability(
+            WiFiDirect::WiFiDirectAdvertisementListenStateDiscoverability_None);
+    }
+    if (SUCCEEDED(hr))
+    {
         hr = advertisement->get_LegacySettings(&legacy);
     }
     if (SUCCEEDED(hr))
