@@ -2,11 +2,18 @@
 
 The host (Windows) is the **server**; the display client (Android) is the **client**.
 The protocol is transport-agnostic: it only assumes an ordered, reliable byte stream.
-v1 runs over TCP tunnelled through ADB (`adb reverse`), see [architecture.md](architecture.md).
+It runs over TCP, either tunnelled through ADB (`adb reverse`, "USB") or over a direct Wi-Fi
+link to an access point the host runs itself ("Wi-Fi"), see [architecture.md](architecture.md).
 
-> **Security:** the protocol has no authentication or encryption. The host must only ever
-> bind to the loopback interface (`127.0.0.1`). Any future network transport (Wi-Fi, LAN)
-> must add authentication before it ships.
+> **Security:** the protocol has no encryption of its own. The host binds only to
+> - the loopback interface (`127.0.0.1`, reached through the USB tunnel), where sessions are
+>   unauthenticated, and
+> - the address of its own Wi-Fi Direct access point. That link is WPA2-encrypted with a
+>   passphrase derived from the pairing code, and every session must first pass the
+>   [authentication handshake](#authentication-wi-fi).
+>
+> A transport over a shared network (e.g. the home LAN) would also need per-message encryption
+> and must not ship without it.
 
 ## Conventions
 
@@ -37,6 +44,10 @@ Senders must write header and payload with a single write/send call (see latency
 | `0x01` | `HELLO`           | client → host    | First message; client capabilities             |
 | `0x02` | `CONFIG`          | host → client    | Stream parameters chosen by host               |
 | `0x03` | `BYE`             | either           | Graceful close                                 |
+| `0x04` | `AUTH_CHALLENGE`  | host → client    | Wi-Fi only: first message, host nonce          |
+| `0x05` | `AUTH_RESPONSE`   | client → host    | Wi-Fi only: client nonce + proof of the key    |
+| `0x06` | `AUTH_OK`         | host → client    | Wi-Fi only: host's proof of the key            |
+| `0x07` | `PAIRING`         | host → client    | USB only: the pairing code for Wi-Fi           |
 | `0x10` | `VIDEO_FRAME`     | host → client    | One encoded access unit                        |
 | `0x11` | `REQUEST_KEYFRAME`| client → host    | Ask for an IDR (decoder reset, corruption)     |
 | `0x20` | `PING`            | either           | Clock sync / RTT probe                         |
@@ -170,13 +181,65 @@ stretched over its whole surface, so they don't depend on the stream size. The h
 per-contact state: a contact that is active on the host but missing from a frame is lifted, and
 all contacts are lifted when the session ends, so a dropped message can't leave a finger stuck.
 
+## Pairing and authentication
+
+### Pairing code
+
+Wi-Fi sessions rely on a secret shared by host and client: the **pairing code**, 20 characters
+of the RFC 4648 Base32 alphabet (`A`–`Z`, `2`–`7`, 100 random bits), shown as
+`XXXXX-XXXXX-XXXXX-XXXXX`. Parsers accept lower case and ignore `-` and spaces; the
+*normalized* code is the 20 upper-case characters. The host generates it once and keeps it.
+It reaches the client either automatically in a `PAIRING` message over USB, or by the user typing it.
+
+Everything else is derived with HMAC-SHA256, keyed with the ASCII bytes of the normalized code:
+
+| Value            | Derivation                                                                  |
+|------------------|-----------------------------------------------------------------------------|
+| Network name     | `DeuxDisplay-` + lower-case hex of the first 2 bytes of `HMAC(code, "deuxdisplay ssid")` |
+| WPA2 passphrase  | RFC 4648 Base32 (upper case, 24 chars) of the first 15 bytes of `HMAC(code, "deuxdisplay wpa2")` |
+| `auth_key`       | `HMAC(code, "deuxdisplay auth")` (32 bytes)                                  |
+
+Test vector: code `ABCDE-FGHIJ-KLMNO-PQRST` → network `DeuxDisplay-9968`, passphrase
+`3252SPVCLUVNTF5LBJDW4VOV`, `auth_key` `29a36685…b996a64e` (full values in the unit tests).
+
+### `PAIRING` (host → client, USB only)
+
+| Size | Field       | Notes                                   |
+|-----:|-------------|-----------------------------------------|
+| str  | `code`      | Pairing code, `XXXXX-XXXXX-XXXXX-XXXXX` |
+| str  | `host_name` | PC name, for display                    |
+
+Sent right after `CONFIG` on USB sessions. The client stores it, replacing any older code. It is
+never sent over Wi-Fi.
+
+### Authentication (Wi-Fi)
+
+On a Wi-Fi connection the host speaks first, and nothing else is accepted until the handshake
+succeeds:
+
+1. Host → `AUTH_CHALLENGE`: `host_nonce` (16 random bytes).
+2. Client → `AUTH_RESPONSE`: `client_nonce` (16 random bytes), then
+   `mac = HMAC(auth_key, "DXDP-C" ‖ host_nonce ‖ client_nonce)` (32 bytes).
+3. Host checks `mac` in constant time. On success → `AUTH_OK`:
+   `HMAC(auth_key, "DXDP-H" ‖ client_nonce ‖ host_nonce)` (32 bytes). The client checks it too,
+   which proves the host knows the code as well.
+4. The client sends `HELLO` and the session continues as on USB.
+
+`"DXDP-C"`/`"DXDP-H"` are the 6 ASCII bytes. If the response is wrong, any other message
+arrives first, or no response arrives within 5 s, the host sends `BYE` and closes the
+connection. The client closes on a wrong `AUTH_OK`. USB (loopback) sessions skip the handshake.
+
 ## Session flow
 
 ```
 client                              host
   | ---- TCP connect -------------->  |
+  | <--- AUTH_CHALLENGE ------------  |   (Wi-Fi only)
+  | ---- AUTH_RESPONSE ------------>  |   (Wi-Fi only)
+  | <--- AUTH_OK -------------------  |   (Wi-Fi only)
   | ---- HELLO -------------------->  |
   | <--- CONFIG --------------------  |
+  | <--- PAIRING -------------------  |   (USB only)
   | <--- VIDEO_FRAME (CODEC_CONFIG) - |
   | <--- VIDEO_FRAME (KEYFRAME) ----  |
   | <--- VIDEO_FRAME ... -----------  |

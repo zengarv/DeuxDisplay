@@ -2,6 +2,7 @@
 
 // Implements docs/wire-protocol.md. Keep the two in sync.
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -21,6 +22,10 @@ enum class MessageType : uint8_t
     Hello = 0x01,
     Config = 0x02,
     Bye = 0x03,
+    AuthChallenge = 0x04,
+    AuthResponse = 0x05,
+    AuthOk = 0x06,
+    Pairing = 0x07,
     VideoFrame = 0x10,
     RequestKeyframe = 0x11,
     Ping = 0x20,
@@ -121,6 +126,25 @@ struct TouchFrame
     std::vector<TouchContact> contacts;
 };
 
+inline constexpr size_t kNonceSize = 16;
+inline constexpr size_t kMacSize = 32;
+using Nonce = std::array<uint8_t, kNonceSize>;
+using Mac = std::array<uint8_t, kMacSize>;
+
+// AUTH_RESPONSE (Wi-Fi): the client's nonce and its proof that it knows the pairing code.
+struct AuthResponse
+{
+    Nonce clientNonce{};
+    Mac mac{};
+};
+
+// PAIRING (USB): hands the client the code it needs for Wi-Fi sessions.
+struct PairingInfo
+{
+    std::string code;
+    std::string hostName;
+};
+
 void EncodeHeader(const Header& header, std::span<uint8_t, kHeaderSize> out);
 
 // Returns nullopt for a malformed header (reserved bits set, oversized payload).
@@ -142,6 +166,18 @@ std::optional<Pong> ParsePong(std::span<const uint8_t> payload);
 
 std::vector<uint8_t> SerializeFrameStats(const FrameStats& msg);
 std::optional<FrameStats> ParseFrameStats(std::span<const uint8_t> payload);
+
+// AUTH_CHALLENGE carries a Nonce, AUTH_OK a Mac.
+std::vector<uint8_t> SerializeNonce(const Nonce& nonce);
+std::optional<Nonce> ParseNonce(std::span<const uint8_t> payload);
+std::vector<uint8_t> SerializeMac(const Mac& mac);
+std::optional<Mac> ParseMac(std::span<const uint8_t> payload);
+
+std::vector<uint8_t> SerializeAuthResponse(const AuthResponse& msg);
+std::optional<AuthResponse> ParseAuthResponse(std::span<const uint8_t> payload);
+
+std::vector<uint8_t> SerializePairing(const PairingInfo& msg);
+std::optional<PairingInfo> ParsePairing(std::span<const uint8_t> payload);
 
 std::vector<uint8_t> SerializeTouchFrame(const TouchFrame& msg);
 // nullopt for other input kinds, bad slots/actions, or a count outside 1..kMaxTouchContacts.

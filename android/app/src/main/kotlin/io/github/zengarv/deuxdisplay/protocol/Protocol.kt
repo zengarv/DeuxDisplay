@@ -20,6 +20,9 @@ object Protocol {
     /** Re-encode of the previous image, sent to push the real frame out of one-behind decoders. */
     const val FLAG_REPEAT: Int = 1 shl 2
 
+    const val NONCE_SIZE: Int = 16
+    const val MAC_SIZE: Int = 32
+
     const val INPUT_KIND_TOUCH: Int = 1
     const val MAX_TOUCH_CONTACTS: Int = 10
 }
@@ -28,6 +31,10 @@ object MessageType {
     const val HELLO: Int = 0x01
     const val CONFIG: Int = 0x02
     const val BYE: Int = 0x03
+    const val AUTH_CHALLENGE: Int = 0x04
+    const val AUTH_RESPONSE: Int = 0x05
+    const val AUTH_OK: Int = 0x06
+    const val PAIRING: Int = 0x07
     const val VIDEO_FRAME: Int = 0x10
     const val REQUEST_KEYFRAME: Int = 0x11
     const val PING: Int = 0x20
@@ -226,6 +233,41 @@ fun parseTouchFrame(payload: ByteArray): List<TouchContact> = parsing(payload) {
     }
 }
 
+/** AUTH_CHALLENGE payload is the host nonce; AUTH_OK payload is the host's MAC. */
+fun parseFixed(payload: ByteArray, size: Int): ByteArray {
+    if (payload.size < size) throw ProtocolException("truncated payload")
+    return payload.copyOf(size)
+}
+
+/** AUTH_RESPONSE: the client's nonce and its proof that it knows the pairing code. */
+class AuthResponse(val clientNonce: ByteArray, val mac: ByteArray) {
+    init {
+        require(clientNonce.size == Protocol.NONCE_SIZE && mac.size == Protocol.MAC_SIZE)
+    }
+
+    fun serialize(): ByteArray = clientNonce + mac
+
+    companion object {
+        fun parse(payload: ByteArray): AuthResponse {
+            val bytes = parseFixed(payload, Protocol.NONCE_SIZE + Protocol.MAC_SIZE)
+            return AuthResponse(bytes.copyOf(Protocol.NONCE_SIZE), bytes.copyOfRange(Protocol.NONCE_SIZE, bytes.size))
+        }
+    }
+}
+
+/** PAIRING (USB only): the code the client needs for Wi-Fi sessions. */
+data class PairingInfo(val code: String, val hostName: String) {
+    fun serialize(): ByteArray {
+        val c = code.toByteArray(Charsets.UTF_8)
+        val h = hostName.toByteArray(Charsets.UTF_8)
+        return le(4 + c.size + h.size).putShort(c.size.toShort()).put(c).putShort(h.size.toShort()).put(h).array()
+    }
+
+    companion object {
+        fun parse(payload: ByteArray): PairingInfo = parsing(payload) { PairingInfo(string(), string()) }
+    }
+}
+
 fun serializePing(pingId: Long): ByteArray = le(8).putLong(pingId).array()
 
 fun parsePing(payload: ByteArray): Long = parsing(payload) { long }
@@ -233,6 +275,8 @@ fun parsePing(payload: ByteArray): Long = parsing(payload) { long }
 private fun le(size: Int): ByteBuffer = ByteBuffer.allocate(size).order(ByteOrder.LITTLE_ENDIAN)
 
 private fun ByteBuffer.u16(): Int = short.toInt() and 0xFFFF
+
+private fun ByteBuffer.string(): String = String(ByteArray(u16()).also { get(it) }, Charsets.UTF_8)
 
 private inline fun <T> parsing(payload: ByteArray, block: ByteBuffer.() -> T): T =
     try {

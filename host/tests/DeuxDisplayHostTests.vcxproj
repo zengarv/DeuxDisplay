@@ -30,6 +30,11 @@
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <Import Project="..\Common.props" />
+  <ItemDefinitionGroup>
+    <Link>
+      <AdditionalDependencies>bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="TestMain.cpp" />
     <ClCompile Include="ProtocolTests.cpp" />
@@ -40,6 +45,7 @@
     <ClCompile Include="..\src\input\TouchTracker.cpp" />
     <ClCompile Include="..\src\capture\PointerShape.cpp" />
     <ClCompile Include="..\src\protocol\Protocol.cpp" />
+    <ClCompile Include="..\src\protocol\Pairing.cpp" />
     <ClCompile Include="..\src\encode\AnnexB.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

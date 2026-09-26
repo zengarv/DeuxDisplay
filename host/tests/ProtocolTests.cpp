@@ -1,5 +1,6 @@
 #include "Check.h"
 
+#include "../src/protocol/Pairing.h"
 #include "../src/protocol/Protocol.h"
 
 #include <array>
@@ -145,6 +146,83 @@ void TouchFrameRoundTrip()
     CHECK(!ParseTouchFrame(bad).has_value());
 }
 
+template <size_t N> std::array<uint8_t, N> FromHex(const char* hex)
+{
+    std::array<uint8_t, N> out{};
+    for (size_t i = 0; i < N; ++i)
+    {
+        auto nibble = [](char c) { return static_cast<uint8_t>(c <= '9' ? c - '0' : c - 'a' + 10); };
+        out[i] = static_cast<uint8_t>(nibble(hex[2 * i]) << 4 | nibble(hex[2 * i + 1]));
+    }
+    return out;
+}
+
+void AuthMessagesRoundTrip()
+{
+    Nonce nonce{};
+    for (size_t i = 0; i < nonce.size(); ++i)
+    {
+        nonce[i] = static_cast<uint8_t>(i);
+    }
+    CHECK(ParseNonce(SerializeNonce(nonce)) == nonce);
+    const auto nonceBytes = SerializeNonce(nonce);
+    CHECK(!ParseNonce(std::span(nonceBytes).first(15)).has_value());
+
+    Mac mac{};
+    mac[31] = 0xEE;
+    CHECK(ParseMac(SerializeMac(mac)) == mac);
+
+    const auto response = SerializeAuthResponse({nonce, mac});
+    CHECK(response.size() == 48 && response[0] == 0 && response[16 + 31] == 0xEE);
+    auto parsed = ParseAuthResponse(response);
+    CHECK(parsed.has_value() && parsed->clientNonce == nonce && parsed->mac == mac);
+    CHECK(!ParseAuthResponse(std::span(response).first(47)).has_value());
+
+    const auto pairing = SerializePairing({"ABCDE-FGHIJ-KLMNO-PQRST", "DESKTOP"});
+    auto p = ParsePairing(pairing);
+    CHECK(p.has_value() && p->code == "ABCDE-FGHIJ-KLMNO-PQRST" && p->hostName == "DESKTOP");
+    CHECK(!ParsePairing(std::span(pairing).first(pairing.size() - 1)).has_value());
+}
+
+void PairingCodes()
+{
+    CHECK(NormalizePairingCode("abcde-fghij klmno-pqrst") == std::string("ABCDEFGHIJKLMNOPQRST"));
+    CHECK(!NormalizePairingCode("ABCDE-FGHIJ-KLMNO-PQRS").has_value()); // too short
+    CHECK(!NormalizePairingCode("ABCDE-FGHIJ-KLMNO-PQRS1").has_value()); // '1' isn't Base32
+    CHECK(FormatPairingCode("ABCDEFGHIJKLMNOPQRST") == "ABCDE-FGHIJ-KLMNO-PQRST");
+
+    const std::string generated = GeneratePairingCode();
+    CHECK(NormalizePairingCode(generated) == generated);
+    CHECK(GeneratePairingCode() != generated);
+}
+
+void PairingVectors()
+{
+    // Same vectors as docs/wire-protocol.md and android/.../PairingTest.kt.
+    auto secrets = DerivePairingSecrets("ABCDEFGHIJKLMNOPQRST");
+    CHECK(secrets.has_value());
+    CHECK(secrets->ssid == "DeuxDisplay-9968");
+    CHECK(secrets->passphrase == "3252SPVCLUVNTF5LBJDW4VOV");
+    CHECK(secrets->authKey == FromHex<32>("29a36685e1e1d7687dbc70c81ffd8a402317f3a748ca2e00b9cbcae5b996a64e"));
+
+    Nonce hostNonce{};
+    Nonce clientNonce{};
+    for (size_t i = 0; i < kNonceSize; ++i)
+    {
+        hostNonce[i] = static_cast<uint8_t>(i);
+        clientNonce[i] = static_cast<uint8_t>(16 + i);
+    }
+    const Mac client = ClientAuthMac(secrets->authKey, hostNonce, clientNonce);
+    const Mac host = HostAuthMac(secrets->authKey, clientNonce, hostNonce);
+    CHECK(client == FromHex<32>("ee895399e449a1562e0db0c6656f9a09e9a0f9655a0a09e6c7717a36935dd2cb"));
+    CHECK(host == FromHex<32>("cfa68d242928b528cccf900c86d75c21e6434ff4595955445482ac9ef4ec50c8"));
+    CHECK(MacEquals(client, client) && !MacEquals(client, host));
+
+    Nonce a{};
+    Nonce b{};
+    CHECK(RandomNonce(a) && RandomNonce(b) && a != b);
+}
+
 } // namespace
 
 void RunProtocolTests()
@@ -155,4 +233,7 @@ void RunProtocolTests()
     ConfigRoundTrip();
     PingPongStatsRoundTrip();
     TouchFrameRoundTrip();
+    AuthMessagesRoundTrip();
+    PairingCodes();
+    PairingVectors();
 }

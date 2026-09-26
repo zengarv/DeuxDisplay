@@ -1,5 +1,6 @@
 #include "Protocol.h"
 
+#include <algorithm>
 #include <type_traits>
 #include <utility>
 
@@ -20,6 +21,11 @@ class Writer
         {
             m_buf.push_back(static_cast<uint8_t>(value >> (8 * i)));
         }
+    }
+
+    template <size_t N> void PutBytes(const std::array<uint8_t, N>& bytes)
+    {
+        m_buf.insert(m_buf.end(), bytes.begin(), bytes.end());
     }
 
     void PutString(const std::string& s)
@@ -54,6 +60,17 @@ class Reader
         }
         m_pos += sizeof(T);
         out = value;
+        return true;
+    }
+
+    template <size_t N> bool GetBytes(std::array<uint8_t, N>& out)
+    {
+        if (m_data.size() - m_pos < N)
+        {
+            return false;
+        }
+        std::copy_n(m_data.begin() + m_pos, N, out.begin());
+        m_pos += N;
         return true;
     }
 
@@ -244,6 +261,80 @@ std::optional<FrameStats> ParseFrameStats(std::span<const uint8_t> payload)
     Reader r(payload);
     FrameStats msg;
     if (!r.Get(msg.captureTs) || !r.Get(msg.receivedTs) || !r.Get(msg.decodedTs) || !r.Get(msg.renderedTs))
+    {
+        return std::nullopt;
+    }
+    return msg;
+}
+
+std::vector<uint8_t> SerializeNonce(const Nonce& nonce)
+{
+    Writer w(kNonceSize);
+    w.PutBytes(nonce);
+    return w.Take();
+}
+
+std::optional<Nonce> ParseNonce(std::span<const uint8_t> payload)
+{
+    Reader r(payload);
+    Nonce nonce{};
+    if (!r.GetBytes(nonce))
+    {
+        return std::nullopt;
+    }
+    return nonce;
+}
+
+std::vector<uint8_t> SerializeMac(const Mac& mac)
+{
+    Writer w(kMacSize);
+    w.PutBytes(mac);
+    return w.Take();
+}
+
+std::optional<Mac> ParseMac(std::span<const uint8_t> payload)
+{
+    Reader r(payload);
+    Mac mac{};
+    if (!r.GetBytes(mac))
+    {
+        return std::nullopt;
+    }
+    return mac;
+}
+
+std::vector<uint8_t> SerializeAuthResponse(const AuthResponse& msg)
+{
+    Writer w(kNonceSize + kMacSize);
+    w.PutBytes(msg.clientNonce);
+    w.PutBytes(msg.mac);
+    return w.Take();
+}
+
+std::optional<AuthResponse> ParseAuthResponse(std::span<const uint8_t> payload)
+{
+    Reader r(payload);
+    AuthResponse msg;
+    if (!r.GetBytes(msg.clientNonce) || !r.GetBytes(msg.mac))
+    {
+        return std::nullopt;
+    }
+    return msg;
+}
+
+std::vector<uint8_t> SerializePairing(const PairingInfo& msg)
+{
+    Writer w(4 + msg.code.size() + msg.hostName.size());
+    w.PutString(msg.code);
+    w.PutString(msg.hostName);
+    return w.Take();
+}
+
+std::optional<PairingInfo> ParsePairing(std::span<const uint8_t> payload)
+{
+    Reader r(payload);
+    PairingInfo msg;
+    if (!r.GetString(msg.code) || !r.GetString(msg.hostName))
     {
         return std::nullopt;
     }
