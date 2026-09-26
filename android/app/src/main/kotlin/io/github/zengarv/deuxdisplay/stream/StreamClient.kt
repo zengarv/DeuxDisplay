@@ -1,9 +1,12 @@
 package io.github.zengarv.deuxdisplay.stream
 
+import android.media.MediaFormat
 import android.os.Process
 import android.util.Log
 import android.view.Surface
+import io.github.zengarv.deuxdisplay.protocol.Codec
 import io.github.zengarv.deuxdisplay.protocol.Config
+import io.github.zengarv.deuxdisplay.protocol.FrameStats
 import io.github.zengarv.deuxdisplay.protocol.Header
 import io.github.zengarv.deuxdisplay.protocol.Hello
 import io.github.zengarv.deuxdisplay.protocol.MessageType
@@ -11,6 +14,7 @@ import io.github.zengarv.deuxdisplay.protocol.Protocol
 import io.github.zengarv.deuxdisplay.protocol.ProtocolException
 import io.github.zengarv.deuxdisplay.protocol.Pong
 import io.github.zengarv.deuxdisplay.protocol.parsePing
+import io.github.zengarv.deuxdisplay.protocol.serializePing
 import java.io.BufferedInputStream
 import java.io.DataInputStream
 import java.io.IOException
@@ -28,6 +32,8 @@ class StreamClient(
     private val surface: Surface,
     private val listener: Listener,
     private val port: Int = DEFAULT_PORT,
+    private val decodeWithoutSurface: Boolean = false, // latency experiment: nothing is displayed
+    private val forcedDecoder: String? = null, // debug: MediaCodec component name to use
 ) {
     fun interface Listener {
         /** A human-readable status, or null once video is streaming. Called on the network thread. */
@@ -87,6 +93,8 @@ class StreamClient(
             Log.i(TAG, "connected, sent HELLO $hello")
 
             var decoder: VideoDecoder? = null
+            val clock = ClockSync()
+            val pinger = startPinger()
             try {
                 val headerBytes = ByteArray(Protocol.HEADER_SIZE)
                 while (running) {
@@ -96,22 +104,47 @@ class StreamClient(
                         frameBuffer = ByteArray(Integer.highestOneBit(header.length) shl 1)
                     }
                     input.readFully(frameBuffer, 0, header.length)
+                    val receivedUs = nowMicros()
 
                     when (header.type) {
                         MessageType.VIDEO_FRAME ->
-                            decoder?.submit(frameBuffer, header.length, header.flags, header.timestamp)
+                            decoder?.submit(frameBuffer, header.length, header.flags, header.timestamp, receivedUs)
                         MessageType.CONFIG -> {
                             val config = Config.parse(frameBuffer.copyOf(header.length))
                             Log.i(TAG, "CONFIG $config")
                             decoder?.release()
-                            decoder = VideoDecoder(surface, config.widthPx, config.heightPx) {
-                                send(MessageType.REQUEST_KEYFRAME, 0, ByteArray(0))
+                            val mime = when (config.codec) {
+                                Codec.HEVC -> MediaFormat.MIMETYPE_VIDEO_HEVC
+                                Codec.H264 -> MediaFormat.MIMETYPE_VIDEO_AVC
                             }
+                            decoder = VideoDecoder(
+                                if (decodeWithoutSurface) null else surface,
+                                mime,
+                                config.widthPx,
+                                config.heightPx,
+                                onNeedKeyframe = { send(MessageType.REQUEST_KEYFRAME, 0, ByteArray(0)) },
+                                onFrameTiming = { pts, received, decoded, rendered ->
+                                    if (clock.valid) {
+                                        val stats = FrameStats(
+                                            pts,
+                                            clock.toHost(received),
+                                            clock.toHost(decoded),
+                                            clock.toHost(rendered),
+                                        )
+                                        send(MessageType.FRAME_STATS, 0, stats.serialize())
+                                    }
+                                },
+                                forcedDecoder = forcedDecoder,
+                            )
                             listener.onStatus(null)
                         }
                         MessageType.PING -> {
                             val id = parsePing(frameBuffer.copyOf(header.length))
                             send(MessageType.PONG, 0, Pong(id, header.timestamp).serialize())
+                        }
+                        MessageType.PONG -> {
+                            val pong = Pong.parse(frameBuffer.copyOf(header.length))
+                            clock.onPong(pong.pingTimestamp, receivedUs, header.timestamp)
                         }
                         MessageType.BYE -> {
                             Log.i(TAG, "host said BYE")
@@ -121,12 +154,26 @@ class StreamClient(
                     }
                 }
             } finally {
+                pinger.interrupt()
                 decoder?.release()
                 synchronized(sendLock) { output = null }
                 socket = null
             }
         }
     }
+
+    /** Pings the host periodically so [ClockSync] can map client timestamps onto the host clock. */
+    private fun startPinger(): Thread = Thread({
+        var id = 0L
+        try {
+            while (!Thread.currentThread().isInterrupted) {
+                send(MessageType.PING, 0, serializePing(id++))
+                Thread.sleep(PING_INTERVAL_MS)
+            }
+        } catch (e: InterruptedException) {
+            Log.d(TAG, "pinger stopped")
+        }
+    }, "DeuxDisplay-ping").apply { start() }
 
     private fun send(type: Int, flags: Int, payload: ByteArray) {
         val header = Header(type, flags, payload.size, nowMicros())
@@ -149,5 +196,6 @@ class StreamClient(
         const val DEFAULT_PORT = 27183
         private const val CONNECT_TIMEOUT_MS = 1000
         private const val RETRY_DELAY_MS = 1000L
+        private const val PING_INTERVAL_MS = 500L
     }
 }

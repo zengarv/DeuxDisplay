@@ -16,7 +16,8 @@ namespace dd::render
 class FrameComposer
 {
   public:
-    HRESULT Initialize(ID3D11Device* device, UINT width, UINT height);
+    // Desktop frames are width x height; the NV12 output (what gets encoded) is outWidth x outHeight.
+    HRESULT Initialize(ID3D11Device* device, UINT width, UINT height, UINT outWidth, UINT outHeight);
 
     // Returns an NV12 texture from a small ring; it stays valid until kRingSize more calls.
     HRESULT Compose(ID3D11Texture2D* desktop, const capture::PointerState& pointer, ID3D11Texture2D** nv12);
@@ -36,6 +37,8 @@ class FrameComposer
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> m_context;
     UINT m_width = 0;
     UINT m_height = 0;
+    UINT m_outWidth = 0;
+    UINT m_outHeight = 0;
 
     Microsoft::WRL::ComPtr<ID3D11Texture2D> m_compose;
     Microsoft::WRL::ComPtr<ID3D11RenderTargetView> m_composeRtv;

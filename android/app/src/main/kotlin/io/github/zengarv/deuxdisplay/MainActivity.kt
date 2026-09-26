@@ -81,7 +81,17 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
         Log.i(TAG, "surface ${width}x$height")
         if (client == null) {
             val hello = DisplayInfo.hello(this)
-            client = StreamClient(hello, holder.surface, ::showStatus).also { it.start() }
+            // adb shell am start -n io.github.zengarv.deuxdisplay/.MainActivity --ez debug_no_surface true
+            // ... --es debug_decoder c2.android.avc.decoder   (force a specific decoder)
+            val noSurface = intent.getBooleanExtra("debug_no_surface", false)
+            val decoder = intent.getStringExtra("debug_decoder")
+            client = StreamClient(
+                hello,
+                holder.surface,
+                ::showStatus,
+                decodeWithoutSurface = noSurface,
+                forcedDecoder = decoder,
+            ).also { it.start() }
         }
     }
 

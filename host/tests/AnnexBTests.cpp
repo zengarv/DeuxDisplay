@@ -57,6 +57,33 @@ void LonePpsStaysInline()
     CHECK(!split.keyframe);
 }
 
+void HevcParameterSetsAndIdr()
+{
+    // VPS(32) SPS(33) PPS(34) IDR_W_RADL(19); HEVC NAL header byte0 = type << 1.
+    const std::vector<uint8_t> au = {
+        0x00, 0x00, 0x00, 0x01, 0x40, 0x01, 0x0C, // VPS
+        0x00, 0x00, 0x00, 0x01, 0x42, 0x01, 0x01, // SPS
+        0x00, 0x00, 0x00, 0x01, 0x44, 0x01, 0xC1, // PPS
+        0x00, 0x00, 0x00, 0x01, 0x26, 0x01, 0xAF, // IDR
+    };
+    const auto nals = Split(au, Codec::Hevc);
+    CHECK(nals.size() == 4);
+    if (nals.size() == 4)
+    {
+        CHECK(nals[0].type == kHevcNalVps && nals[1].type == kHevcNalSps && nals[2].type == kHevcNalPps);
+        CHECK(nals[3].type == 19);
+    }
+    const auto split = SeparateParameterSets(au, Codec::Hevc);
+    CHECK(split.keyframe);
+    CHECK(split.codecConfig.size() == 21);
+    CHECK(split.frame.size() == 7);
+
+    // TRAIL_R (type 1): header byte 0x02.
+    const std::vector<uint8_t> trail = {0x00, 0x00, 0x00, 0x01, 0x02, 0x01, 0xD0};
+    const auto p = SeparateParameterSets(trail, Codec::Hevc);
+    CHECK(!p.keyframe && p.codecConfig.empty() && p.frame == trail);
+}
+
 void EmptyAndGarbage()
 {
     CHECK(SplitH264({}).empty());
@@ -72,5 +99,6 @@ void RunAnnexBTests()
     SeparatesParameterSets();
     NonKeyframe();
     LonePpsStaysInline();
+    HevcParameterSetsAndIdr();
     EmptyAndGarbage();
 }

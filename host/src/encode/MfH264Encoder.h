@@ -22,6 +22,7 @@ struct EncoderSettings
     UINT height = 0;
     UINT fps = 60;
     UINT bitrateKbps = 30000;
+    bool hevc = false;       // H.265 instead of H.264
     UINT qualityVsSpeed = 0; // CODECAPI_AVEncCommonQualityVsSpeed: 0 fastest .. 100 best quality
 };
 
@@ -40,7 +41,7 @@ struct EncodedFrame
 
 class EventPump;
 
-// Hardware H.264 encoder through Media Foundation (NVENC / Quick Sync / AMF behind one API),
+// Hardware H.264/HEVC encoder through Media Foundation (NVENC / Quick Sync / AMF behind one API),
 // configured for low latency: no B-frames, CBR, CODECAPI_AVLowLatencyMode.
 class MfH264Encoder
 {

@@ -1,6 +1,7 @@
 package io.github.zengarv.deuxdisplay.stream
 
 import android.app.Activity
+import android.media.MediaFormat
 import android.os.Build
 import android.util.DisplayMetrics
 import io.github.zengarv.deuxdisplay.protocol.Hello
@@ -44,7 +45,8 @@ object DisplayInfo {
             heightPx = height,
             densityDpi = metrics.densityDpi,
             refreshMilliHz = (refreshHz * 1000).roundToInt(),
-            codecs = Protocol.CODEC_MASK_H264,
+            codecs = Protocol.CODEC_MASK_H264 or
+                (if (VideoDecoder.hasHardwareDecoder(MediaFormat.MIMETYPE_VIDEO_HEVC)) Protocol.CODEC_MASK_HEVC else 0),
             deviceName = "${Build.MANUFACTURER} ${Build.MODEL}",
             xdpiMilli = (xdpi * 1000).roundToInt(),
             ydpiMilli = (ydpi * 1000).roundToInt(),

@@ -109,7 +109,8 @@ void PrintUsage()
 {
     std::wprintf(L"DeuxDisplayHost\n\n"
                  L"Usage:\n"
-                 L"  DeuxDisplayHost --serve [--port N] [--bitrate KBPS] [--output \\\\.\\DISPLAYn]\n"
+                 L"  DeuxDisplayHost --serve [--port N] [--bitrate KBPS] [--max-fps N] [--max-stream-size WxH]\n"
+                 L"                          [--codec auto|h264|hevc] [--repeat-frames] [--output \\\\.\\DISPLAYn]\n"
                  L"      Stream to a client on 127.0.0.1:N (default 27183), plugging a virtual monitor that\n"
                  L"      matches the client. --output streams an existing monitor instead (debugging).\n"
                  L"  DeuxDisplayHost --create-display [SECONDS]\n"
@@ -132,6 +133,32 @@ bool ParseServeOptions(int argc, wchar_t** argv, dd::ServeOptions& options)
         {
             options.bitrateKbps = std::wcstoul(argv[++i], nullptr, 10);
         }
+        else if (arg == L"--max-stream-size" && i + 1 < argc)
+        {
+            wchar_t* end = nullptr;
+            options.maxStreamWidth = std::wcstoul(argv[++i], &end, 10);
+            options.maxStreamHeight = (end && (*end == L'x' || *end == L'X')) ? std::wcstoul(end + 1, nullptr, 10) : 0;
+            if (options.maxStreamWidth < 320 || options.maxStreamHeight < 240)
+            {
+                return false;
+            }
+        }
+        else if (arg == L"--codec" && i + 1 < argc)
+        {
+            options.codec = argv[++i];
+            if (options.codec != L"auto" && options.codec != L"h264" && options.codec != L"hevc")
+            {
+                return false;
+            }
+        }
+        else if (arg == L"--repeat-frames")
+        {
+            options.repeatFrames = true;
+        }
+        else if (arg == L"--max-fps" && i + 1 < argc)
+        {
+            options.maxFps = std::wcstoul(argv[++i], nullptr, 10);
+        }
         else if (arg == L"--output" && i + 1 < argc)
         {
             options.outputName = argv[++i];
@@ -141,7 +168,7 @@ bool ParseServeOptions(int argc, wchar_t** argv, dd::ServeOptions& options)
             return false;
         }
     }
-    return options.port != 0 && options.bitrateKbps >= 500;
+    return options.port != 0 && options.bitrateKbps >= 500 && options.maxFps >= 1 && options.maxFps <= 240;
 }
 
 } // namespace

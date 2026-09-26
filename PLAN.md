@@ -75,7 +75,12 @@ Input passthrough is the stretch milestone M5.
 - [ ] Detect/avoid a second adb version (another tool's v40 server kills ours and the reverse tunnel)
 
 ### M4 — Measure and tune
-- [ ] PING/PONG clock sync and FRAME_STATS instrumentation; latency overlay/log
+- [x] PING/PONG clock sync and FRAME_STATS instrumentation; host logs end-to-end p50/p95
+- [x] Frame pacing (`--max-fps`, default 60), stream scaling (`--max-stream-size`), HEVC
+      (`--codec auto|h264|hevc`), adb-reverse watchdog in `run.ps1`
+- [x] Diagnosed the MediaTek decoder's fixed ~2-frame hold (see docs/latency-notes.md)
+- [ ] Client-side cursor overlay via `CURSOR` messages (biggest perceived-latency win left)
+- [ ] Keep the encoder's GPU clocks up between bursty frames
 - [ ] Tune encoder, TCP, `ADB_BURST_MODE`, decoder flags; record in `docs/latency-notes.md`
 - [ ] 90 Hz mode
 - [ ] **Acceptance:** p50 capture→render < 50 ms

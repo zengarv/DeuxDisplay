@@ -11,13 +11,15 @@ using Microsoft::WRL::ComPtr;
 namespace dd::render
 {
 
-HRESULT FrameComposer::Initialize(ID3D11Device* device, UINT width, UINT height)
+HRESULT FrameComposer::Initialize(ID3D11Device* device, UINT width, UINT height, UINT outWidth, UINT outHeight)
 {
     *this = FrameComposer{};
     m_device = device;
     m_device->GetImmediateContext(&m_context);
     m_width = width;
     m_height = height;
+    m_outWidth = outWidth;
+    m_outHeight = outHeight;
 
     D3D11_TEXTURE2D_DESC desc{};
     desc.Width = width;
@@ -117,8 +119,10 @@ HRESULT FrameComposer::InitVideoProcessor()
 
     D3D11_VIDEO_PROCESSOR_CONTENT_DESC content{};
     content.InputFrameFormat = D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE;
-    content.InputWidth = content.OutputWidth = m_width;
-    content.InputHeight = content.OutputHeight = m_height;
+    content.InputWidth = m_width;
+    content.InputHeight = m_height;
+    content.OutputWidth = m_outWidth;
+    content.OutputHeight = m_outHeight;
     content.InputFrameRate = content.OutputFrameRate = {60, 1};
     content.Usage = D3D11_VIDEO_USAGE_OPTIMAL_SPEED;
     hr = m_videoDevice->CreateVideoProcessorEnumerator(&content, &m_vpEnum);
@@ -141,8 +145,8 @@ HRESULT FrameComposer::InitVideoProcessor()
     }
 
     D3D11_TEXTURE2D_DESC desc{};
-    desc.Width = m_width;
-    desc.Height = m_height;
+    desc.Width = m_outWidth;
+    desc.Height = m_outHeight;
     desc.MipLevels = 1;
     desc.ArraySize = 1;
     desc.Format = DXGI_FORMAT_NV12;
@@ -191,6 +195,13 @@ HRESULT FrameComposer::InitVideoProcessor()
     }
     m_videoContext->VideoProcessorSetStreamFrameFormat(m_vp.Get(), 0, D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE);
     m_videoContext->VideoProcessorSetStreamAutoProcessingMode(m_vp.Get(), 0, FALSE);
+
+    // Scale the whole desktop into the whole output (a no-op when sizes match).
+    const RECT src{0, 0, static_cast<LONG>(m_width), static_cast<LONG>(m_height)};
+    const RECT dst{0, 0, static_cast<LONG>(m_outWidth), static_cast<LONG>(m_outHeight)};
+    m_videoContext->VideoProcessorSetStreamSourceRect(m_vp.Get(), 0, TRUE, &src);
+    m_videoContext->VideoProcessorSetStreamDestRect(m_vp.Get(), 0, TRUE, &dst);
+    m_videoContext->VideoProcessorSetOutputTargetRect(m_vp.Get(), TRUE, &dst);
     return S_OK;
 }
 
