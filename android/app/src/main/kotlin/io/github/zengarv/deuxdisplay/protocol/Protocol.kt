@@ -83,11 +83,15 @@ data class Hello(
     /** Physical DPI x1000 (Android xdpi/ydpi); 0 = unknown. Optional on the wire. */
     val xdpiMilli: Int = 0,
     val ydpiMilli: Int = 0,
+    /** Stream mode picked by the user; 0 = host decides. Optional on the wire. */
+    val modeWidthPx: Int = 0,
+    val modeHeightPx: Int = 0,
+    val modeRefreshMilliHz: Int = 0,
     val protocolVersion: Int = Protocol.VERSION,
 ) {
     fun serialize(): ByteArray {
         val name = deviceName.toByteArray(Charsets.UTF_8).let { if (it.size > 0xFFFF) it.copyOf(0xFFFF) else it }
-        return le(30 + name.size).apply {
+        return le(38 + name.size).apply {
             putInt(Protocol.MAGIC)
             putShort(protocolVersion.toShort())
             putShort(widthPx.toShort())
@@ -99,6 +103,9 @@ data class Hello(
             put(name)
             putInt(xdpiMilli)
             putInt(ydpiMilli)
+            putShort(modeWidthPx.toShort())
+            putShort(modeHeightPx.toShort())
+            putInt(modeRefreshMilliHz)
         }.array()
     }
 
@@ -117,7 +124,11 @@ data class Hello(
             val hasDpi = remaining() >= 8
             val xdpi = if (hasDpi) int else 0
             val ydpi = if (hasDpi) int else 0
-            Hello(w, h, dpi, refresh, codecs, String(name, Charsets.UTF_8), xdpi, ydpi, version)
+            val hasMode = remaining() >= 8
+            val modeW = if (hasMode) u16() else 0
+            val modeH = if (hasMode) u16() else 0
+            val modeRefresh = if (hasMode) int else 0
+            Hello(w, h, dpi, refresh, codecs, String(name, Charsets.UTF_8), xdpi, ydpi, modeW, modeH, modeRefresh, version)
         }
     }
 }

@@ -11,7 +11,8 @@ import kotlin.math.roundToInt
 /** Describes this device's panel for the HELLO message (landscape, as the app is locked to it). */
 object DisplayInfo {
 
-    fun hello(activity: Activity): Hello {
+    /** [mode] is the user's stream format pick, sent so the host streams exactly that. */
+    fun hello(activity: Activity, mode: StreamMode = StreamMode()): Hello {
         val metrics = activity.resources.displayMetrics
         var width: Int
         var height: Int
@@ -40,16 +41,23 @@ object DisplayInfo {
             xdpi = ydpi.also { ydpi = xdpi }
         }
 
+        // Only advertise HEVC if its decoder can take the picked size; H.264 was checked when the
+        // size was offered (StreamModes).
+        val hevc = VideoDecoder.hasHardwareDecoder(MediaFormat.MIMETYPE_VIDEO_HEVC) &&
+            (!mode.hasSize || VideoDecoder.supportsSize(MediaFormat.MIMETYPE_VIDEO_HEVC, mode.width, mode.height))
+
         return Hello(
             widthPx = width,
             heightPx = height,
             densityDpi = metrics.densityDpi,
             refreshMilliHz = (refreshHz * 1000).roundToInt(),
-            codecs = Protocol.CODEC_MASK_H264 or
-                (if (VideoDecoder.hasHardwareDecoder(MediaFormat.MIMETYPE_VIDEO_HEVC)) Protocol.CODEC_MASK_HEVC else 0),
+            codecs = Protocol.CODEC_MASK_H264 or (if (hevc) Protocol.CODEC_MASK_HEVC else 0),
             deviceName = "${Build.MANUFACTURER} ${Build.MODEL}",
             xdpiMilli = (xdpi * 1000).roundToInt(),
             ydpiMilli = (ydpi * 1000).roundToInt(),
+            modeWidthPx = if (mode.hasSize) mode.width else 0,
+            modeHeightPx = if (mode.hasSize) mode.height else 0,
+            modeRefreshMilliHz = mode.refreshHz * 1000,
         )
     }
 }

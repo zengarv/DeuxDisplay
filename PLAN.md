@@ -79,6 +79,8 @@ Input passthrough is the stretch milestone M5.
 - [x] Frame pacing (`--max-fps`, default 60), stream scaling (`--max-stream-size`), HEVC
       (`--codec auto|h264|hevc`), adb-reverse watchdog in `run.ps1`
 - [x] Diagnosed the MediaTek decoder's fixed ~2-frame hold (see docs/latency-notes.md)
+- [x] Stream resolution/frame-rate picker in the app (panel modes + decodable scaled sizes);
+      sent in `HELLO`, host plugs and streams exactly that mode (unverified on hardware)
 - [ ] Client-side cursor overlay via `CURSOR` messages (biggest perceived-latency win left)
 - [ ] Keep the encoder's GPU clocks up between bursty frames
 - [ ] Tune encoder, TCP, `ADB_BURST_MODE`, decoder flags; record in `docs/latency-notes.md`

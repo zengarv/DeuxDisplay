@@ -59,10 +59,28 @@ Senders must write header and payload with a single write/send call (see latency
 | str  | `device_name`       | e.g. `OnePlus OPD2305`                                   |
 | 4    | `xdpi_milli`        | *Optional.* Physical horizontal DPI × 1000 (Android `xdpi`) |
 | 4    | `ydpi_milli`        | *Optional.* Physical vertical DPI × 1000 (Android `ydpi`)   |
+| 2    | `mode_width_px`     | *Optional.* Stream width the user picked; 0 = host decides  |
+| 2    | `mode_height_px`    | *Optional.* Stream height the user picked; 0 = host decides |
+| 4    | `mode_refresh_mhz`  | *Optional.* Frame rate the user picked (mHz); 0 = host decides |
 
 The host plugs a virtual monitor matching `width_px` × `height_px` at `refresh_mhz`, with a
 physical size derived from `xdpi_milli`/`ydpi_milli` (falling back to `density_dpi`), so Windows
 picks sensible scaling for any device.
+
+The `mode_*` fields let the user pick the stream format on the client. Each group is independent:
+`mode_width_px`/`mode_height_px` (both non-zero, landscape, even) or `mode_refresh_mhz` may be set
+on its own. When set, the host streams **only** that format:
+
+- The virtual monitor exposes just the requested size and/or refresh rate, so Windows renders the
+  desktop at exactly that mode (no host-side scaling; the client scales to its panel).
+- The physical size still comes from the native `width_px`/`height_px`, so Windows scaling
+  stays correct for the real panel.
+- A requested size or rate overrides the host's `--max-stream-size` / `--max-fps` limits.
+- A value the host can't serve (outside 640×480–7680×4320, or 24–240 Hz) is ignored with a log line.
+
+Clients only offer modes the device supports: panel sizes and refresh rates, plus scaled-down
+panel sizes the decoder accepts. The optional fields are positional: a client sending `mode_*`
+must also send `xdpi_milli`/`ydpi_milli`.
 
 ### `CONFIG` (host → client)
 

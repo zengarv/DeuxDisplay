@@ -53,9 +53,12 @@ void HelloRoundTrip()
     h.deviceName = "OnePlus OPD2305";
     h.xdpiMilli = 260047;
     h.ydpiMilli = 260268;
+    h.modeWidthPx = 1920;
+    h.modeHeightPx = 1370;
+    h.modeRefreshMilliHz = 60000;
 
     auto bytes = SerializeHello(h);
-    CHECK(bytes.size() == 20 + 2 + h.deviceName.size() + 8);
+    CHECK(bytes.size() == 20 + 2 + h.deviceName.size() + 8 + 8);
     CHECK(bytes[0] == 'D' && bytes[1] == 'X' && bytes[2] == 'D' && bytes[3] == 'P');
 
     auto p = ParseHello(bytes);
@@ -66,11 +69,17 @@ void HelloRoundTrip()
     CHECK(p->codecs == (kCodecMaskH264 | kCodecMaskHevc));
     CHECK(p->deviceName == h.deviceName);
     CHECK(p->xdpiMilli == 260047 && p->ydpiMilli == 260268);
+    CHECK(p->modeWidthPx == 1920 && p->modeHeightPx == 1370 && p->modeRefreshMilliHz == 60000);
 
     bytes.push_back(0xAA); // appended future field must be ignored
     CHECK(ParseHello(bytes).has_value());
 
-    bytes.resize(bytes.size() - 9); // older client: no optional DPI fields
+    bytes.resize(bytes.size() - 9); // older client: DPI but no requested mode
+    auto noMode = ParseHello(bytes);
+    CHECK(noMode.has_value() && noMode->xdpiMilli == 260047 && noMode->modeWidthPx == 0 &&
+          noMode->modeRefreshMilliHz == 0);
+
+    bytes.resize(bytes.size() - 8); // older client: no optional DPI fields
     auto old = ParseHello(bytes);
     CHECK(old.has_value() && old->xdpiMilli == 0 && old->deviceName == h.deviceName);
 

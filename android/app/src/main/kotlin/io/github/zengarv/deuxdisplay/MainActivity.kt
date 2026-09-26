@@ -6,25 +6,51 @@ import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
+import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.Spinner
 import android.widget.TextView
 import io.github.zengarv.deuxdisplay.stream.DisplayInfo
+import io.github.zengarv.deuxdisplay.stream.ModeOption
 import io.github.zengarv.deuxdisplay.stream.StreamClient
+import io.github.zengarv.deuxdisplay.stream.StreamMode
+import io.github.zengarv.deuxdisplay.stream.StreamModes
 
 class MainActivity : Activity(), SurfaceHolder.Callback {
 
     private lateinit var status: TextView
+    private lateinit var settings: LinearLayout
+    private lateinit var resolutionSpinner: Spinner
+    private lateinit var refreshSpinner: Spinner
     private var client: StreamClient? = null
+    private var surfaceHolder: SurfaceHolder? = null
+
+    // Stream format choices: resolution index 0 and refresh index 0 are "Auto".
+    private lateinit var modeOptions: List<ModeOption>
+    private var refreshChoices: List<Int> = emptyList()
+    private var mode = StreamMode()
+
+    private var streaming = false
+    private var settingsOpened = false // opened over a running stream with Back
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        modeOptions = StreamModes.options(this)
+        mode = loadMode()
+        Log.i(TAG, "stream modes $modeOptions, selected $mode")
+        applyPanelRefresh()
 
         val surfaceView = SurfaceView(this)
         surfaceView.holder.addCallback(this)
@@ -34,6 +60,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
             textSize = 18f
             gravity = Gravity.CENTER
         }
+        settings = buildSettings()
 
         setContentView(
             FrameLayout(this).apply {
@@ -43,6 +70,11 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
                     FrameLayout.LayoutParams.MATCH_PARENT,
                     FrameLayout.LayoutParams.MATCH_PARENT,
                 ))
+                addView(settings, FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL,
+                ).apply { bottomMargin = dp(48) })
             },
         )
     }
@@ -71,6 +103,16 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
         }
     }
 
+    // Back toggles the stream settings while streaming (touch isn't forwarded to the PC yet).
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_BACK && streaming) {
+            settingsOpened = !settingsOpened
+            updateSettingsVisibility()
+            return true
+        }
+        return super.onKeyDown(keyCode, event)
+    }
+
     // The stream lives exactly as long as the surface: when the tablet sleeps or the app goes to
     // the background, the host unplugs the virtual monitor and Windows moves the windows back.
     override fun surfaceCreated(holder: SurfaceHolder) {
@@ -79,36 +121,171 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
         Log.i(TAG, "surface ${width}x$height")
-        if (client == null) {
-            val hello = DisplayInfo.hello(this)
-            // adb shell am start -n io.github.zengarv.deuxdisplay/.MainActivity --ez debug_no_surface true
-            // ... --es debug_decoder c2.android.avc.decoder   (force a specific decoder)
-            val noSurface = intent.getBooleanExtra("debug_no_surface", false)
-            val decoder = intent.getStringExtra("debug_decoder")
-            client = StreamClient(
-                hello,
-                holder.surface,
-                ::showStatus,
-                decodeWithoutSurface = noSurface,
-                forcedDecoder = decoder,
-            ).also { it.start() }
-        }
+        surfaceHolder = holder
+        if (client == null) startClient(holder)
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
         Log.i(TAG, "surface destroyed")
+        surfaceHolder = null
         client?.stop()
         client = null
+    }
+
+    private fun startClient(holder: SurfaceHolder) {
+        val hello = DisplayInfo.hello(this, mode)
+        // adb shell am start -n io.github.zengarv.deuxdisplay/.MainActivity --ez debug_no_surface true
+        // ... --es debug_decoder c2.android.avc.decoder   (force a specific decoder)
+        val noSurface = intent.getBooleanExtra("debug_no_surface", false)
+        val decoder = intent.getStringExtra("debug_decoder")
+        client = StreamClient(
+            hello,
+            holder.surface,
+            ::showStatus,
+            decodeWithoutSurface = noSurface,
+            forcedDecoder = decoder,
+        ).also { it.start() }
     }
 
     private fun showStatus(text: String?) {
         runOnUiThread {
             status.text = text.orEmpty()
             status.visibility = if (text == null) View.GONE else View.VISIBLE
+            streaming = text == null
+            if (!streaming) settingsOpened = false
+            updateSettingsVisibility()
         }
     }
 
+    // --- Stream settings -------------------------------------------------------------------
+
+    private fun buildSettings(): LinearLayout {
+        refreshSpinner = Spinner(this)
+        updateRefreshChoices(resolutionIndexOf(mode), mode.refreshHz)
+
+        val resolutionLabels = listOf(getString(R.string.setting_auto)) + modeOptions.map {
+            getString(if (it.native) R.string.setting_native_size else R.string.setting_size, it.width, it.height)
+        }
+        resolutionSpinner = Spinner(this).apply {
+            adapter = spinnerAdapter(resolutionLabels)
+            setSelection(resolutionIndexOf(mode))
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                    // Refresh rates depend on the size; keep the picked rate if it's still offered.
+                    updateRefreshChoices(position, selectedRefreshHz())
+                }
+
+                override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+            }
+        }
+
+        val apply = Button(this).apply {
+            setText(R.string.setting_apply)
+            setOnClickListener { applySettings() }
+        }
+        val hint = TextView(this).apply {
+            setText(R.string.setting_hint)
+            setTextColor(Color.GRAY)
+        }
+
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.argb(0xE0, 0x20, 0x20, 0x20))
+            setPadding(dp(24), dp(16), dp(24), dp(16))
+            addView(settingRow(R.string.setting_resolution, resolutionSpinner))
+            addView(settingRow(R.string.setting_refresh, refreshSpinner))
+            addView(apply)
+            addView(hint)
+        }
+    }
+
+    private fun settingRow(label: Int, spinner: Spinner): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(TextView(this@MainActivity).apply {
+                setText(label)
+                setTextColor(Color.LTGRAY)
+                textSize = 16f
+                minWidth = dp(120)
+            })
+            addView(spinner)
+        }
+
+    private fun spinnerAdapter(labels: List<String>): ArrayAdapter<String> =
+        ArrayAdapter(this, android.R.layout.simple_spinner_item, labels).apply {
+            setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        }
+
+    /** Rates offered for the resolution at [resolutionIndex] ("Auto" = the native size's). */
+    private fun ratesFor(resolutionIndex: Int): List<Int> =
+        (modeOptions.getOrNull(resolutionIndex - 1) ?: modeOptions.firstOrNull { it.native })?.refreshRates.orEmpty()
+
+    private fun updateRefreshChoices(resolutionIndex: Int, keepHz: Int) {
+        refreshChoices = ratesFor(resolutionIndex)
+        val labels = listOf(getString(R.string.setting_auto)) + refreshChoices.map { getString(R.string.setting_hz, it) }
+        refreshSpinner.adapter = spinnerAdapter(labels)
+        refreshSpinner.setSelection(refreshChoices.indexOf(keepHz) + 1) // not offered -> 0 (Auto)
+    }
+
+    private fun selectedRefreshHz(): Int = refreshChoices.getOrNull(refreshSpinner.selectedItemPosition - 1) ?: 0
+
+    private fun resolutionIndexOf(m: StreamMode): Int =
+        modeOptions.indexOfFirst { it.width == m.width && it.height == m.height } + 1 // -1 -> 0 (Auto)
+
+    private fun applySettings() {
+        val option = modeOptions.getOrNull(resolutionSpinner.selectedItemPosition - 1)
+        val picked = StreamMode(option?.width ?: 0, option?.height ?: 0, selectedRefreshHz())
+        settingsOpened = false
+        updateSettingsVisibility()
+        if (picked == mode) return
+
+        Log.i(TAG, "stream mode $mode -> $picked")
+        mode = picked
+        saveMode()
+        applyPanelRefresh()
+        // Reconnect with a new HELLO: the host unplugs the monitor and plugs one in the new mode.
+        val holder = surfaceHolder ?: return
+        client?.stop()
+        startClient(holder)
+    }
+
+    private fun updateSettingsVisibility() {
+        settings.visibility = if (!streaming || settingsOpened) View.VISIBLE else View.GONE
+    }
+
+    /** Runs the panel at the picked rate too, so frames aren't shown on a mismatched refresh. */
+    private fun applyPanelRefresh() {
+        val params = window.attributes
+        params.preferredDisplayModeId = StreamModes.panelModeIdFor(this, mode.refreshHz)
+        window.attributes = params
+    }
+
+    private fun loadMode(): StreamMode {
+        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        var saved = StreamMode(prefs.getInt(KEY_WIDTH, 0), prefs.getInt(KEY_HEIGHT, 0), prefs.getInt(KEY_REFRESH, 0))
+        // Drop anything this device no longer offers (e.g. restored from another device).
+        val index = resolutionIndexOf(saved)
+        if (index == 0) saved = saved.copy(width = 0, height = 0)
+        if (saved.refreshHz !in ratesFor(index)) saved = saved.copy(refreshHz = 0)
+        return saved
+    }
+
+    private fun saveMode() {
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+            .putInt(KEY_WIDTH, mode.width)
+            .putInt(KEY_HEIGHT, mode.height)
+            .putInt(KEY_REFRESH, mode.refreshHz)
+            .apply()
+    }
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
     companion object {
         const val TAG = "DeuxDisplay"
+        private const val PREFS = "stream"
+        private const val KEY_WIDTH = "width"
+        private const val KEY_HEIGHT = "height"
+        private const val KEY_REFRESH = "refresh_hz"
     }
 }
