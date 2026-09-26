@@ -9,6 +9,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 namespace dd::edid
 {
@@ -164,6 +165,38 @@ constexpr std::array<uint8_t, kEdidSize> BuildEdid(const MonitorDescription& m)
     }
     e[127] = static_cast<uint8_t>(0x100 - sum);
     return e;
+}
+
+// Decodes the detailed timing descriptors of a base block back into modes (refresh rounded to
+// whole Hz). Used where IddCx hands the driver only the EDID, not the monitor it belongs to.
+inline std::vector<Timing> DetailedTimings(const uint8_t* e, size_t size)
+{
+    std::vector<Timing> timings;
+    if (size < kEdidSize)
+    {
+        return timings;
+    }
+    for (size_t offset : {size_t{54}, size_t{72}, size_t{90}, size_t{108}})
+    {
+        const uint8_t* d = e + offset;
+        const unsigned clock10kHz = d[0] | d[1] << 8;
+        if (clock10kHz == 0)
+        {
+            continue; // display descriptor, not a timing
+        }
+        const unsigned width = d[2] | (d[4] >> 4) << 8;
+        const unsigned hblank = d[3] | (d[4] & 0x0F) << 8;
+        const unsigned height = d[5] | (d[7] >> 4) << 8;
+        const unsigned vblank = d[6] | (d[7] & 0x0F) << 8;
+        const uint64_t total = uint64_t{width + hblank} * (height + vblank);
+        if (total == 0)
+        {
+            continue;
+        }
+        const uint64_t refresh = (uint64_t{clock10kHz} * 10000 + total / 2) / total;
+        timings.push_back({static_cast<uint16_t>(width), static_cast<uint16_t>(height), static_cast<uint16_t>(refresh)});
+    }
+    return timings;
 }
 
 } // namespace dd::edid

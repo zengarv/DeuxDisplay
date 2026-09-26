@@ -12,6 +12,15 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $CertSubject = 'CN=DeuxDisplay Local Driver Signing'
+$RepoRoot = Split-Path $PSScriptRoot -Parent
+
+$hostExe = Get-ChildItem (Join-Path $RepoRoot 'host\x64') -Recurse -Filter DeuxDisplayHost.exe -ErrorAction SilentlyContinue |
+    Select-Object -First 1
+if ($hostExe) {
+    & $hostExe.FullName --remove-device | Out-Host
+} else {
+    Write-Warning 'DeuxDisplayHost.exe not found; the software device (if any) stays until removed in Device Manager.'
+}
 
 # pnputil /enum-drivers prints "Published Name" / "Original Name" pairs; match ours.
 $published = $null

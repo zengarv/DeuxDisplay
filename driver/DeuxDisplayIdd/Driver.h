@@ -23,7 +23,10 @@ Licensed under the Microsoft Public License (MS-PL); see driver/LICENSE.
 #include <wrl.h>
 
 #include <memory>
+#include <mutex>
 #include <vector>
+
+#include "Public.h"
 
 namespace Microsoft
 {
@@ -39,6 +42,13 @@ typedef HandleT<HandleTraits::HANDLENullTraits> Thread;
 
 namespace DeuxDisplay
 {
+
+struct ModeSpec
+{
+    DWORD Width;
+    DWORD Height;
+    DWORD VSync;
+};
 
 /// Manages the creation and lifetime of a Direct3D render device.
 struct Direct3DDevice
@@ -82,24 +92,38 @@ class IndirectDeviceContext
     virtual ~IndirectDeviceContext();
 
     void InitAdapter();
-    void FinishInit();
+    void OnAdapterReady();
+
+    // Plugs the virtual monitor described by `Request`, replacing any existing one. `Owner` is the
+    // file object of the host's handle; closing it unplugs the monitor.
+    NTSTATUS Plug(const dd::driver::PlugRequest& Request, WDFFILEOBJECT Owner);
+    void Unplug();
+    void OnFileCleanup(WDFFILEOBJECT FileObject);
 
   protected:
+    void UnplugLocked();
+
     WDFDEVICE m_WdfDevice;
     IDDCX_ADAPTER m_Adapter;
+    std::mutex m_Lock;
+    bool m_AdapterReady = false;
+    IDDCX_MONITOR m_Monitor = nullptr;
+    WDFFILEOBJECT m_Owner = nullptr;
 };
 
 class IndirectMonitorContext
 {
   public:
-    IndirectMonitorContext(_In_ IDDCX_MONITOR Monitor);
+    IndirectMonitorContext(_In_ IDDCX_MONITOR Monitor, std::vector<ModeSpec> Modes);
     virtual ~IndirectMonitorContext();
 
     void AssignSwapChain(IDDCX_SWAPCHAIN SwapChain, LUID RenderAdapter, HANDLE NewFrameEvent);
     void UnassignSwapChain();
+    const std::vector<ModeSpec>& Modes() const { return m_Modes; }
 
   private:
     IDDCX_MONITOR m_Monitor;
+    std::vector<ModeSpec> m_Modes;
     std::unique_ptr<SwapChainProcessor> m_ProcessingThread;
 };
 

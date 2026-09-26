@@ -62,7 +62,7 @@ void PhysicalSize()
     CHECK(e[22] == 17); // cm, rounded from 168 mm
 }
 
-void DetailedTimings()
+void TimingDescriptors()
 {
     const auto e = BuildEdid(kPadGo);
 
@@ -96,14 +96,28 @@ void NoSecondaryTiming()
     CHECK(e[72] == 0 && e[73] == 0 && e[75] == 0x10);
 }
 
+void DecodesOwnTimings()
+{
+    const auto e = BuildEdid(kPadGo);
+    const auto timings = DetailedTimings(e.data(), e.size());
+    CHECK(timings.size() == 2);
+    if (timings.size() == 2)
+    {
+        CHECK(timings[0].width == 2408 && timings[0].height == 1720 && timings[0].refreshHz == 60);
+        CHECK(timings[1].width == 2408 && timings[1].height == 1720 && timings[1].refreshHz == 90);
+    }
+    CHECK(DetailedTimings(e.data(), 64).empty());
+}
+
 } // namespace
 
 void RunEdidTests()
 {
+    DecodesOwnTimings();
     HeaderAndChecksum();
     Manufacturer();
     PhysicalSize();
-    DetailedTimings();
+    TimingDescriptors();
     NameDescriptor();
     NoSecondaryTiming();
 }

@@ -65,11 +65,18 @@ Also needs the VS **Windows Driver Kit** component (VS 17.14+). See
 ```powershell
 msbuild driver\DeuxDisplayIdd.sln /t:restore /p:RestorePackagesConfig=true
 msbuild driver\DeuxDisplayIdd.sln /p:Configuration=Release /p:Platform=x64
-.\scripts\install-driver.ps1                               # elevated; no test-signing mode needed
-.\host\x64\Release\DeuxDisplayHost.exe --create-display    # virtual monitor appears
+.\scripts\install-driver.ps1                               # elevated, once; no test-signing mode needed
+.\host\x64\Release\DeuxDisplayHost.exe --create-display    # normal user: virtual monitor appears
 ```
 `install-driver.ps1` trusts a locally generated signing certificate on your machine. Read
-[driver/README.md](driver/README.md) first.
+[driver/README.md](driver/README.md) first. After installation nothing needs admin rights.
+
+### Try the stream without a tablet
+```powershell
+.\host\x64\Release\DeuxDisplayHost.exe --serve             # waits on 127.0.0.1:27183
+python tools\dump_receiver.py --seconds 10                 # acts as the tablet; writes out.h264
+ffplay out.h264
+```
 
 ### Android app
 ```powershell

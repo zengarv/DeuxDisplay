@@ -5,18 +5,19 @@ client device. It is a **user-mode (UMDF 2)** driver derived from Microsoft's Id
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)). Licensed under **MS-PL** ([LICENSE](LICENSE)),
 except `Edid.h` which is MIT.
 
-The monitor only exists while `DeuxDisplayHost` holds it: the host creates a software device
-(`SwDeviceCreate`) with hardware ID `DeuxDisplayIdd`, and Windows loads this driver for it.
-Closing the host removes the monitor, and Windows moves the windows back.
+## How it's used
+- **Install (admin, once):** the driver package plus a persistent software device
+  (`SWD\DeuxDisplayIdd\DeuxDisplayIdd`). The adapter exists, but no monitor is attached.
+- **Runtime (no admin):** `DeuxDisplayHost` opens the device interface declared in
+  [`Public.h`](DeuxDisplayIdd/Public.h) and sends `PLUG` with the client's width, height, refresh
+  rates and physical size. The driver builds an EDID (`Edid.h`, vendor `DXD`, product `0001`,
+  name `DeuxDisplay`) and mode list from that and plugs the monitor. `UNPLUG` removes it. If the
+  host's handle closes (including a crash), the driver unplugs it automatically.
+- Modes: every requested refresh rate at native size, plus half size @ 60 Hz as a fallback.
+- The monitor container ID is fixed, so Windows remembers its arrangement and scaling.
 
-## Default monitor
-| | |
-|---|---|
-| Modes | 2408×1720 @ 60 Hz (preferred), 2408×1720 @ 90 Hz, 1204×860 @ 60 Hz |
-| Physical size | 235 × 168 mm (so Windows picks sensible scaling) |
-| EDID | generated at compile time by `Edid.h`, vendor `DXD`, name `DeuxDisplay` |
-
-Values come from the OnePlus Pad Go, see [docs/devices.md](../docs/devices.md).
+`DeuxDisplayHost --create-display [SECONDS]` plugs a OnePlus Pad Go-sized monitor (2408×1720,
+60/90 Hz, 235×168 mm) for testing without a tablet.
 
 ## Build
 Prerequisites: VS 2022 17.14+ (or Build Tools) with the C++ workload **and the "Windows Driver
@@ -37,16 +38,23 @@ The WDK NuGet version (`driver/Directory.Build.props`) must match the Visual Stu
 10.0.26100.x for VS 2022 (17.x). 10.0.28000.x ships build tasks for VS 2026 (18.x) only.
 
 ## Install (development)
-From an **elevated** PowerShell:
+Build the driver **and** the host first (the script uses the host to create the device). Then,
+from an **elevated** PowerShell:
 ```powershell
 .\scripts\install-driver.ps1
+```
+Then, as a normal user:
+```powershell
 .\host\x64\Release\DeuxDisplayHost.exe --create-display   # monitor appears; Enter removes it
 ```
 
 Because this is a user-mode driver, **test-signing mode is not required** (it's often blocked by
 Secure Boot anyway). `install-driver.ps1` creates a self-signed certificate with a non-exportable
-key, trusts it on this machine only, signs the package catalog, and adds the package with
-`pnputil`.
+key, trusts it on this machine only, signs the package catalog, adds the package with `pnputil`,
+and runs `DeuxDisplayHost --install-device`. Re-running it updates an existing install in place.
+
+The INF grants interactive users read/write on the device object. That's what lets the host
+plug/unplug the monitor without admin rights.
 
 Remove everything:
 ```powershell

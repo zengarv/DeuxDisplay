@@ -1,6 +1,8 @@
 #include "Server.h"
 
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <thread>
 
 #include "capture/DesktopDuplicator.h"
@@ -88,6 +90,40 @@ struct Pipeline
     }
 };
 
+// Turns what the client reported into a monitor description for the driver.
+driver::PlugRequest PlugRequestFor(const protocol::Hello& hello)
+{
+    uint16_t width = hello.widthPx;
+    uint16_t height = hello.heightPx;
+    double fallbackDpi = hello.densityDpi ? hello.densityDpi : 160.0;
+    double xdpi = hello.xdpiMilli ? hello.xdpiMilli / 1000.0 : fallbackDpi;
+    double ydpi = hello.ydpiMilli ? hello.ydpiMilli / 1000.0 : fallbackDpi;
+    if (width < height)
+    {
+        // v1 streams landscape only (the client locks orientation).
+        std::swap(width, height);
+        std::swap(xdpi, ydpi);
+    }
+
+    driver::PlugRequest r;
+    r.width = static_cast<uint16_t>(width & ~1u);
+    r.height = static_cast<uint16_t>(height & ~1u);
+    r.widthMm = static_cast<uint16_t>(std::lround(width / xdpi * 25.4));
+    r.heightMm = static_cast<uint16_t>(std::lround(height / ydpi * 25.4));
+
+    long hz = std::lround(hello.refreshMilliHz / 1000.0);
+    if (hz < 24 || hz > 240)
+    {
+        hz = 60;
+    }
+    r.refreshHz[0] = static_cast<uint16_t>(hz);
+    if (hz != 60)
+    {
+        r.refreshHz[1] = 60;
+    }
+    return r;
+}
+
 bool SendConfig(transport::Connection& conn, const Pipeline& p, unsigned bitrateKbps)
 {
     protocol::Config config{protocol::kVersion, protocol::Codec::H264, static_cast<uint16_t>(p.width),
@@ -156,7 +192,7 @@ struct SessionStats
     }
 };
 
-void RunSession(transport::Connection& conn, const ServeOptions& options)
+void RunSession(transport::Connection& conn, const ServeOptions& options, VirtualDisplay& display)
 {
     protocol::Header header;
     std::vector<uint8_t> payload;
@@ -174,6 +210,37 @@ void RunSession(transport::Connection& conn, const ServeOptions& options)
     }
     Log(L"session: client \"%S\" %ux%u @ %.1f Hz, %u dpi", hello->deviceName.c_str(), hello->widthPx,
         hello->heightPx, hello->refreshMilliHz / 1000.0, hello->densityDpi);
+
+    // Declared before the pipeline so the monitor is unplugged after capture/encode shut down.
+    struct UnplugOnExit
+    {
+        VirtualDisplay& display;
+        ~UnplugOnExit() { display.Unplug(); }
+    } unplugOnExit{display};
+
+    if (options.outputName.empty())
+    {
+        const auto request = PlugRequestFor(*hello);
+        HRESULT plugged = display.Plug(request);
+        if (FAILED(plugged))
+        {
+            Log(L"session: plugging the virtual monitor failed 0x%08lX. Is the driver installed? "
+                L"See driver/README.md.",
+                Hr(plugged));
+            conn.Send(MessageType::Bye, 0, NowMicros(), {});
+            return;
+        }
+        Log(L"session: plugged %ux%u @ %u Hz, %ux%u mm", request.width, request.height, request.refreshHz[0],
+            request.widthMm, request.heightMm);
+        if (!WaitForExtendedDisplay(8000))
+        {
+            Log(L"session: the monitor did not appear as an extended display (looking for %s). "
+                L"Check Settings > System > Display.",
+                capture::kMonitorHardwareId);
+            conn.Send(MessageType::Bye, 0, NowMicros(), {});
+            return;
+        }
+    }
 
     Pipeline pipeline;
     HRESULT hr = pipeline.Initialize(options);
@@ -352,39 +419,15 @@ int Serve(const ServeOptions& options)
     }
 
     VirtualDisplay display;
-    capture::LocatedOutput output;
     if (!options.outputName.empty())
     {
+        capture::LocatedOutput output;
         if (!capture::FindOutputByName(options.outputName, output))
         {
             Log(L"output %s not found (see --list-outputs)", options.outputName.c_str());
             return 1;
         }
         Log(L"debug: streaming existing output %s", output.deviceName.c_str());
-    }
-    else
-    {
-        if (options.createDisplay)
-        {
-            HRESULT hr = display.Create();
-            if (FAILED(hr))
-            {
-                Log(L"Creating the virtual display failed 0x%08lX. Is the driver installed? See driver/README.md.",
-                    Hr(hr));
-                return 1;
-            }
-        }
-        for (int i = 0; i < 50 && !capture::FindVirtualOutput(output); ++i)
-        {
-            Sleep(200);
-        }
-        if (!output.output)
-        {
-            Log(L"The DeuxDisplay monitor did not appear (looking for %s). Is it enabled in Display Settings?",
-                capture::kMonitorHardwareId);
-            return 1;
-        }
-        Log(L"virtual monitor: %s", output.deviceName.c_str());
     }
 
     transport::Listener listener;
@@ -403,7 +446,7 @@ int Serve(const ServeOptions& options)
             Log(L"accept failed (%d)", WSAGetLastError());
             return 1;
         }
-        RunSession(*conn, options);
+        RunSession(*conn, options, display);
     }
 }
 

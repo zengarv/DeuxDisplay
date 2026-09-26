@@ -77,11 +77,14 @@ data class Hello(
     val refreshMilliHz: Int,
     val codecs: Int,
     val deviceName: String,
+    /** Physical DPI x1000 (Android xdpi/ydpi); 0 = unknown. Optional on the wire. */
+    val xdpiMilli: Int = 0,
+    val ydpiMilli: Int = 0,
     val protocolVersion: Int = Protocol.VERSION,
 ) {
     fun serialize(): ByteArray {
         val name = deviceName.toByteArray(Charsets.UTF_8).let { if (it.size > 0xFFFF) it.copyOf(0xFFFF) else it }
-        return le(22 + name.size).apply {
+        return le(30 + name.size).apply {
             putInt(Protocol.MAGIC)
             putShort(protocolVersion.toShort())
             putShort(widthPx.toShort())
@@ -91,6 +94,8 @@ data class Hello(
             putInt(codecs)
             putShort(name.size.toShort())
             put(name)
+            putInt(xdpiMilli)
+            putInt(ydpiMilli)
         }.array()
     }
 
@@ -105,7 +110,11 @@ data class Hello(
             val codecs = int
             val nameLen = u16()
             val name = ByteArray(nameLen).also { get(it) }
-            Hello(w, h, dpi, refresh, codecs, String(name, Charsets.UTF_8), version)
+            // Optional trailing fields: older clients don't send them.
+            val hasDpi = remaining() >= 8
+            val xdpi = if (hasDpi) int else 0
+            val ydpi = if (hasDpi) int else 0
+            Hello(w, h, dpi, refresh, codecs, String(name, Charsets.UTF_8), xdpi, ydpi, version)
         }
     }
 }

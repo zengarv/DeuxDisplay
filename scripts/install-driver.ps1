@@ -12,12 +12,15 @@
     2. Trusts it in LocalMachine\Root and LocalMachine\TrustedPublisher.
     3. Generates and signs the package catalog.
     4. Installs the package into the driver store with pnputil.
+    5. Creates the persistent DeuxDisplay device (`DeuxDisplayHost --install-device`), which
+       needs the host to be built first.
+
+  After this, no admin rights are needed: DeuxDisplayHost (as a normal user) plugs the virtual
+  monitor when a client connects and unplugs it when the client leaves.
 
   SECURITY: anything signed with this certificate will be trusted by this machine. The private
   key never leaves CurrentUser\My, but remove it with `uninstall-driver.ps1 -RemoveCertificate`
   when you're done developing.
-
-  The virtual monitor itself only appears while the host runs (`DeuxDisplayHost --create-display`).
 #>
 [CmdletBinding()]
 param(
@@ -32,10 +35,14 @@ $RepoRoot = Split-Path $PSScriptRoot -Parent
 $PackageDir = Join-Path $RepoRoot "driver\build\x64\$Configuration\DeuxDisplayIdd"
 $Inf = Join-Path $PackageDir 'DeuxDisplayIdd.inf'
 $Cat = Join-Path $PackageDir 'deuxdisplayidd.cat'
+$Host_ = Join-Path $RepoRoot "host\x64\$Configuration\DeuxDisplayHost.exe"
 $CertSubject = 'CN=DeuxDisplay Local Driver Signing'
 
 if (-not (Test-Path $Inf)) {
-    throw "Driver package not found at $PackageDir. Build it first: msbuild driver\DeuxDisplayIdd.sln /t:restore,build /p:RestorePackagesConfig=true /p:Configuration=$Configuration /p:Platform=x64"
+    throw "Driver package not found at $PackageDir. Build it first (see driver/README.md)."
+}
+if (-not (Test-Path $Host_)) {
+    throw "DeuxDisplayHost not found at $Host_. Build it first: msbuild DeuxDisplay.sln /p:Configuration=$Configuration /p:Platform=x64"
 }
 
 function Find-KitTool([string]$Name) {
@@ -86,4 +93,8 @@ if ($LASTEXITCODE -ne 0) { throw 'signtool failed' }
 # 4. Install into the driver store
 pnputil /add-driver $Inf /install | Out-Host
 if ($LASTEXITCODE -notin 0, 259, 3010) { throw "pnputil failed ($LASTEXITCODE)" }
-Write-Host 'Driver installed. Run `DeuxDisplayHost --create-display` to attach the virtual monitor.'
+
+# 5. Persistent device (no monitor is plugged until the host asks for one)
+& $Host_ --install-device | Out-Host
+if ($LASTEXITCODE -ne 0) { throw 'DeuxDisplayHost --install-device failed' }
+Write-Host 'Done. As a normal user, run `DeuxDisplayHost --create-display` (test) or `--serve`.'

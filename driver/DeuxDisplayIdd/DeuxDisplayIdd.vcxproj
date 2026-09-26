@@ -17,6 +17,7 @@
   <ItemGroup>
     <ClInclude Include="Driver.h" />
     <ClInclude Include="Edid.h" />
+    <ClInclude Include="Public.h" />
   </ItemGroup>
   <ItemGroup>
     <Inf Include="DeuxDisplayIdd.inf" />

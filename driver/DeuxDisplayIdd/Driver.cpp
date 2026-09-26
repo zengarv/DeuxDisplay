@@ -8,8 +8,9 @@ Licensed under the Microsoft Public License (MS-PL); see driver/LICENSE.
 
 Abstract:
 
-    Indirect display driver that exposes a single virtual monitor matching the DeuxDisplay
-    client device (default: OnePlus Pad Go, 2408x1720 landscape).
+    Indirect display driver that exposes one virtual monitor matching the DeuxDisplay client
+    device. The monitor is plugged/unplugged at runtime by the host through a device interface
+    (see Public.h); its EDID and mode list are generated from the host's request.
 
 Environment:
 
@@ -29,34 +30,47 @@ using namespace Microsoft::WRL;
 namespace
 {
 
-struct ModeSpec
-{
-    DWORD Width;
-    DWORD Height;
-    DWORD VSync;
-};
-
-// First entry is the preferred mode. Heights must stay even for 4:2:0 video encoding.
-constexpr ModeSpec kModes[] = {
-    {2408, 1720, 60},
-    {2408, 1720, 90},
-    {1204, 860, 60},
-};
-
-constexpr dd::edid::MonitorDescription kMonitor = {
-    {2408, 1720, 60},
-    {2408, 1720, 90},
-    235, // mm, landscape
-    168,
-    1,
-    "DeuxDisplay",
-};
-
-constexpr auto kEdid = dd::edid::BuildEdid(kMonitor);
-
 // Stable so Windows remembers position/scaling of the virtual monitor across sessions.
 // {7E1A5C3D-2B4F-4A6E-9C8D-0F1E2D3C4B5A}
 constexpr GUID kMonitorContainerId = {0x7e1a5c3d, 0x2b4f, 0x4a6e, {0x9c, 0x8d, 0x0f, 0x1e, 0x2d, 0x3c, 0x4b, 0x5a}};
+
+constexpr uint64_t kMaxDtdPixelClockHz = 655'350'000; // 16-bit field in 10 kHz units
+
+// EDID + modes of the currently plugged monitor. IddCx's ParseMonitorDescription callback gets
+// only the EDID bytes (no monitor object), so the mode list is looked up here.
+struct CurrentMonitor
+{
+    std::array<uint8_t, dd::edid::kEdidSize> Edid{};
+    std::vector<ModeSpec> Modes;
+};
+std::mutex g_CurrentLock;
+CurrentMonitor g_Current;
+
+// Requested rates at native size (first = preferred), plus half size at 60 Hz as a
+// low-bandwidth fallback. Heights stay even for 4:2:0 video encoding.
+std::vector<ModeSpec> BuildModes(const dd::driver::PlugRequest& r)
+{
+    std::vector<ModeSpec> modes;
+    for (uint16_t hz : r.refreshHz)
+    {
+        if (hz != 0)
+        {
+            modes.push_back({r.width, r.height, hz});
+        }
+    }
+    const DWORD halfW = (r.width / 2) & ~1u;
+    const DWORD halfH = (r.height / 2) & ~1u;
+    if (halfW >= 640 && halfH >= 480)
+    {
+        modes.push_back({halfW, halfH, 60});
+    }
+    return modes;
+}
+
+bool FitsInDtd(DWORD width, DWORD height, DWORD hz)
+{
+    return uint64_t{width + dd::edid::kHBlank} * (height + dd::edid::kVBlank) * hz <= kMaxDtdPixelClockHz;
+}
 
 } // namespace
 
@@ -123,6 +137,9 @@ EVT_IDD_CX_MONITOR_QUERY_TARGET_MODES DeuxDisplayMonitorQueryModes;
 EVT_IDD_CX_MONITOR_ASSIGN_SWAPCHAIN DeuxDisplayMonitorAssignSwapChain;
 EVT_IDD_CX_MONITOR_UNASSIGN_SWAPCHAIN DeuxDisplayMonitorUnassignSwapChain;
 
+EVT_IDD_CX_DEVICE_IO_CONTROL DeuxDisplayDeviceIoControl;
+EVT_WDF_FILE_CLEANUP DeuxDisplayFileCleanup;
+
 struct IndirectDeviceContextWrapper
 {
     IndirectDeviceContext* pContext;
@@ -184,6 +201,8 @@ _Use_decl_annotations_ NTSTATUS DeuxDisplayDeviceAdd(WDFDRIVER Driver, PWDFDEVIC
     IDD_CX_CLIENT_CONFIG IddConfig;
     IDD_CX_CLIENT_CONFIG_INIT(&IddConfig);
 
+    // IddCx routes IoDeviceControl to its own queue; this callback is how IOCTLs reach the driver.
+    IddConfig.EvtIddCxDeviceIoControl = DeuxDisplayDeviceIoControl;
     IddConfig.EvtIddCxAdapterInitFinished = DeuxDisplayAdapterInitFinished;
 
     IddConfig.EvtIddCxParseMonitorDescription = DeuxDisplayParseMonitorDescription;
@@ -198,6 +217,12 @@ _Use_decl_annotations_ NTSTATUS DeuxDisplayDeviceAdd(WDFDRIVER Driver, PWDFDEVIC
     {
         return Status;
     }
+
+    // Cleanup fires when a handle to the device is closed (including when its process dies),
+    // which lets us unplug the monitor if the host goes away without saying so.
+    WDF_FILEOBJECT_CONFIG FileConfig;
+    WDF_FILEOBJECT_CONFIG_INIT(&FileConfig, WDF_NO_EVENT_CALLBACK, WDF_NO_EVENT_CALLBACK, DeuxDisplayFileCleanup);
+    WdfDeviceInitSetFileObjectConfig(pDeviceInit, &FileConfig, WDF_NO_OBJECT_ATTRIBUTES);
 
     WDF_OBJECT_ATTRIBUTES Attr;
     WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&Attr, IndirectDeviceContextWrapper);
@@ -217,11 +242,15 @@ _Use_decl_annotations_ NTSTATUS DeuxDisplayDeviceAdd(WDFDRIVER Driver, PWDFDEVIC
     }
 
     Status = IddCxDeviceInitialize(Device);
+    if (!NT_SUCCESS(Status))
+    {
+        return Status;
+    }
 
     auto* pContext = WdfObjectGet_IndirectDeviceContextWrapper(Device);
     pContext->pContext = new IndirectDeviceContext(Device);
 
-    return Status;
+    return WdfDeviceCreateDeviceInterface(Device, &dd::driver::kDeviceInterfaceGuid, nullptr);
 }
 
 _Use_decl_annotations_ NTSTATUS DeuxDisplayDeviceD0Entry(WDFDEVICE Device, WDF_POWER_DEVICE_STATE PreviousState)
@@ -425,20 +454,61 @@ void IndirectDeviceContext::InitAdapter()
     }
 }
 
-void IndirectDeviceContext::FinishInit()
+void IndirectDeviceContext::OnAdapterReady()
 {
+    std::lock_guard Lock(m_Lock);
+    m_AdapterReady = true;
+}
+
+NTSTATUS IndirectDeviceContext::Plug(const dd::driver::PlugRequest& Request, WDFFILEOBJECT Owner)
+{
+    if (!dd::driver::IsValidPlugRequest(Request) || !FitsInDtd(Request.width, Request.height, Request.refreshHz[0]))
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    std::lock_guard Lock(m_Lock);
+    if (!m_AdapterReady)
+    {
+        return STATUS_DEVICE_NOT_READY;
+    }
+    UnplugLocked();
+
+    // EDID: preferred timing plus one alternate refresh rate (the full list is in the mode list).
+    dd::edid::MonitorDescription Description;
+    Description.preferred = {Request.width, Request.height, Request.refreshHz[0]};
+    if (Request.refreshHz[1] != 0 && FitsInDtd(Request.width, Request.height, Request.refreshHz[1]))
+    {
+        Description.secondary = {Request.width, Request.height, Request.refreshHz[1]};
+    }
+    Description.widthMm = Request.widthMm;
+    Description.heightMm = Request.heightMm;
+
+    auto Modes = BuildModes(Request);
+    {
+        std::lock_guard CurrentLock(g_CurrentLock);
+        g_Current.Edid = dd::edid::BuildEdid(Description);
+        g_Current.Modes = Modes;
+    }
+
     WDF_OBJECT_ATTRIBUTES Attr;
     WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&Attr, IndirectMonitorContextWrapper);
+    Attr.EvtCleanupCallback = [](WDFOBJECT Object) {
+        auto* pContext = WdfObjectGet_IndirectMonitorContextWrapper(Object);
+        if (pContext)
+        {
+            pContext->Cleanup();
+        }
+    };
 
     IDDCX_MONITOR_INFO MonitorInfo = {};
     MonitorInfo.Size = sizeof(MonitorInfo);
     MonitorInfo.MonitorType = DISPLAYCONFIG_OUTPUT_TECHNOLOGY_DISPLAYPORT_EXTERNAL;
     MonitorInfo.ConnectorIndex = 0;
-
     MonitorInfo.MonitorDescription.Size = sizeof(MonitorInfo.MonitorDescription);
     MonitorInfo.MonitorDescription.Type = IDDCX_MONITOR_DESCRIPTION_TYPE_EDID;
-    MonitorInfo.MonitorDescription.DataSize = static_cast<UINT>(kEdid.size());
-    MonitorInfo.MonitorDescription.pData = const_cast<BYTE*>(kEdid.data());
+    MonitorInfo.MonitorDescription.DataSize = static_cast<UINT>(g_Current.Edid.size());
+    MonitorInfo.MonitorDescription.pData = g_Current.Edid.data();
     MonitorInfo.MonitorContainerId = kMonitorContainerId;
 
     IDARG_IN_MONITORCREATE MonitorCreate = {};
@@ -447,17 +517,55 @@ void IndirectDeviceContext::FinishInit()
 
     IDARG_OUT_MONITORCREATE MonitorCreateOut;
     NTSTATUS Status = IddCxMonitorCreate(m_Adapter, &MonitorCreate, &MonitorCreateOut);
-    if (NT_SUCCESS(Status))
+    if (!NT_SUCCESS(Status))
     {
-        auto* pMonitorContextWrapper = WdfObjectGet_IndirectMonitorContextWrapper(MonitorCreateOut.MonitorObject);
-        pMonitorContextWrapper->pContext = new IndirectMonitorContext(MonitorCreateOut.MonitorObject);
+        return Status;
+    }
 
-        IDARG_OUT_MONITORARRIVAL ArrivalOut;
-        IddCxMonitorArrival(MonitorCreateOut.MonitorObject, &ArrivalOut);
+    auto* pMonitorContextWrapper = WdfObjectGet_IndirectMonitorContextWrapper(MonitorCreateOut.MonitorObject);
+    pMonitorContextWrapper->pContext = new IndirectMonitorContext(MonitorCreateOut.MonitorObject, std::move(Modes));
+
+    IDARG_OUT_MONITORARRIVAL ArrivalOut;
+    Status = IddCxMonitorArrival(MonitorCreateOut.MonitorObject, &ArrivalOut);
+    if (!NT_SUCCESS(Status))
+    {
+        WdfObjectDelete(MonitorCreateOut.MonitorObject);
+        return Status;
+    }
+
+    m_Monitor = MonitorCreateOut.MonitorObject;
+    m_Owner = Owner;
+    return STATUS_SUCCESS;
+}
+
+void IndirectDeviceContext::UnplugLocked()
+{
+    if (m_Monitor)
+    {
+        // IddCx deletes the monitor object after departure.
+        IddCxMonitorDeparture(m_Monitor);
+        m_Monitor = nullptr;
+    }
+    m_Owner = nullptr;
+}
+
+void IndirectDeviceContext::Unplug()
+{
+    std::lock_guard Lock(m_Lock);
+    UnplugLocked();
+}
+
+void IndirectDeviceContext::OnFileCleanup(WDFFILEOBJECT FileObject)
+{
+    std::lock_guard Lock(m_Lock);
+    if (m_Monitor && FileObject == m_Owner)
+    {
+        UnplugLocked();
     }
 }
 
-IndirectMonitorContext::IndirectMonitorContext(_In_ IDDCX_MONITOR Monitor) : m_Monitor(Monitor)
+IndirectMonitorContext::IndirectMonitorContext(_In_ IDDCX_MONITOR Monitor, std::vector<ModeSpec> Modes)
+    : m_Monitor(Monitor), m_Modes(std::move(Modes))
 {
 }
 
@@ -494,10 +602,11 @@ void IndirectMonitorContext::UnassignSwapChain()
 _Use_decl_annotations_ NTSTATUS DeuxDisplayAdapterInitFinished(IDDCX_ADAPTER AdapterObject,
                                                               const IDARG_IN_ADAPTER_INIT_FINISHED* pInArgs)
 {
+    // No monitor yet: the host plugs one via IOCTL when a client connects.
     auto* pDeviceContextWrapper = WdfObjectGet_IndirectDeviceContextWrapper(AdapterObject);
     if (NT_SUCCESS(pInArgs->AdapterInitStatus))
     {
-        pDeviceContextWrapper->pContext->FinishInit();
+        pDeviceContextWrapper->pContext->OnAdapterReady();
     }
 
     return STATUS_SUCCESS;
@@ -516,23 +625,40 @@ _Use_decl_annotations_ NTSTATUS DeuxDisplayAdapterCommitModes(IDDCX_ADAPTER Adap
 _Use_decl_annotations_ NTSTATUS DeuxDisplayParseMonitorDescription(const IDARG_IN_PARSEMONITORDESCRIPTION* pInArgs,
                                                                   IDARG_OUT_PARSEMONITORDESCRIPTION* pOutArgs)
 {
-    pOutArgs->MonitorModeBufferOutputCount = ARRAYSIZE(kModes);
+    const auto* Edid = static_cast<const uint8_t*>(pInArgs->MonitorDescription.pData);
+    const size_t EdidSize = pInArgs->MonitorDescription.DataSize;
 
-    if (pInArgs->MonitorModeBufferInputCount < ARRAYSIZE(kModes))
+    std::vector<ModeSpec> Modes;
+    {
+        std::lock_guard Lock(g_CurrentLock);
+        if (EdidSize == g_Current.Edid.size() && memcmp(Edid, g_Current.Edid.data(), EdidSize) == 0)
+        {
+            Modes = g_Current.Modes;
+        }
+    }
+    if (Modes.empty())
+    {
+        // Not the monitor we just plugged (shouldn't happen): fall back to the EDID's own timings.
+        for (const auto& t : dd::edid::DetailedTimings(Edid, EdidSize))
+        {
+            Modes.push_back({t.width, t.height, t.refreshHz});
+        }
+    }
+    if (Modes.empty())
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    pOutArgs->MonitorModeBufferOutputCount = static_cast<UINT>(Modes.size());
+    if (pInArgs->MonitorModeBufferInputCount < Modes.size())
     {
         // No buffer means the caller is only asking for the count.
         return (pInArgs->MonitorModeBufferInputCount > 0) ? STATUS_BUFFER_TOO_SMALL : STATUS_SUCCESS;
     }
 
-    if (pInArgs->MonitorDescription.DataSize != kEdid.size() ||
-        memcmp(pInArgs->MonitorDescription.pData, kEdid.data(), kEdid.size()) != 0)
+    for (size_t i = 0; i < Modes.size(); i++)
     {
-        return STATUS_INVALID_PARAMETER;
-    }
-
-    for (DWORD i = 0; i < ARRAYSIZE(kModes); i++)
-    {
-        pInArgs->pMonitorModes[i] = CreateIddCxMonitorMode(kModes[i].Width, kModes[i].Height, kModes[i].VSync,
+        pInArgs->pMonitorModes[i] = CreateIddCxMonitorMode(Modes[i].Width, Modes[i].Height, Modes[i].VSync,
                                                            IDDCX_MONITOR_MODE_ORIGIN_MONITORDESCRIPTOR);
     }
     pOutArgs->PreferredMonitorModeIdx = 0;
@@ -544,23 +670,23 @@ _Use_decl_annotations_ NTSTATUS DeuxDisplayMonitorGetDefaultModes(IDDCX_MONITOR 
                                                                  const IDARG_IN_GETDEFAULTDESCRIPTIONMODES* pInArgs,
                                                                  IDARG_OUT_GETDEFAULTDESCRIPTIONMODES* pOutArgs)
 {
-    UNREFERENCED_PARAMETER(MonitorObject);
-
     // Only called for EDID-less monitors, which this driver never creates, but kept correct anyway.
-    pOutArgs->DefaultMonitorModeBufferOutputCount = ARRAYSIZE(kModes);
+    const auto& Modes = WdfObjectGet_IndirectMonitorContextWrapper(MonitorObject)->pContext->Modes();
+
+    pOutArgs->DefaultMonitorModeBufferOutputCount = static_cast<UINT>(Modes.size());
     if (pInArgs->DefaultMonitorModeBufferInputCount == 0)
     {
         return STATUS_SUCCESS;
     }
-    if (pInArgs->DefaultMonitorModeBufferInputCount < ARRAYSIZE(kModes))
+    if (pInArgs->DefaultMonitorModeBufferInputCount < Modes.size())
     {
         return STATUS_BUFFER_TOO_SMALL;
     }
 
-    for (DWORD i = 0; i < ARRAYSIZE(kModes); i++)
+    for (size_t i = 0; i < Modes.size(); i++)
     {
         pInArgs->pDefaultMonitorModes[i] =
-            CreateIddCxMonitorMode(kModes[i].Width, kModes[i].Height, kModes[i].VSync, IDDCX_MONITOR_MODE_ORIGIN_DRIVER);
+            CreateIddCxMonitorMode(Modes[i].Width, Modes[i].Height, Modes[i].VSync, IDDCX_MONITOR_MODE_ORIGIN_DRIVER);
     }
     pOutArgs->PreferredMonitorModeIdx = 0;
 
@@ -571,16 +697,16 @@ _Use_decl_annotations_ NTSTATUS DeuxDisplayMonitorQueryModes(IDDCX_MONITOR Monit
                                                             const IDARG_IN_QUERYTARGETMODES* pInArgs,
                                                             IDARG_OUT_QUERYTARGETMODES* pOutArgs)
 {
-    UNREFERENCED_PARAMETER(MonitorObject);
+    const auto& Modes = WdfObjectGet_IndirectMonitorContextWrapper(MonitorObject)->pContext->Modes();
 
     // The OS offers the intersection of monitor modes and these target modes.
-    pOutArgs->TargetModeBufferOutputCount = ARRAYSIZE(kModes);
+    pOutArgs->TargetModeBufferOutputCount = static_cast<UINT>(Modes.size());
 
-    if (pInArgs->TargetModeBufferInputCount >= ARRAYSIZE(kModes))
+    if (pInArgs->TargetModeBufferInputCount >= Modes.size())
     {
-        for (DWORD i = 0; i < ARRAYSIZE(kModes); i++)
+        for (size_t i = 0; i < Modes.size(); i++)
         {
-            pInArgs->pTargetModes[i] = CreateIddCxTargetMode(kModes[i].Width, kModes[i].Height, kModes[i].VSync);
+            pInArgs->pTargetModes[i] = CreateIddCxTargetMode(Modes[i].Width, Modes[i].Height, Modes[i].VSync);
         }
     }
 
@@ -601,6 +727,48 @@ _Use_decl_annotations_ NTSTATUS DeuxDisplayMonitorUnassignSwapChain(IDDCX_MONITO
     auto* pMonitorContextWrapper = WdfObjectGet_IndirectMonitorContextWrapper(MonitorObject);
     pMonitorContextWrapper->pContext->UnassignSwapChain();
     return STATUS_SUCCESS;
+}
+
+_Use_decl_annotations_ VOID DeuxDisplayDeviceIoControl(WDFDEVICE Device, WDFREQUEST Request, size_t OutputBufferLength,
+                                                      size_t InputBufferLength, ULONG IoControlCode)
+{
+    UNREFERENCED_PARAMETER(OutputBufferLength);
+    UNREFERENCED_PARAMETER(InputBufferLength);
+
+    auto* pContext = WdfObjectGet_IndirectDeviceContextWrapper(Device)->pContext;
+    NTSTATUS Status = STATUS_INVALID_DEVICE_REQUEST;
+
+    switch (IoControlCode)
+    {
+    case dd::driver::kIoctlPlug: {
+        PVOID Buffer = nullptr;
+        Status = WdfRequestRetrieveInputBuffer(Request, sizeof(dd::driver::PlugRequest), &Buffer, nullptr);
+        if (NT_SUCCESS(Status))
+        {
+            dd::driver::PlugRequest Plug;
+            memcpy(&Plug, Buffer, sizeof(Plug));
+            Status = pContext->Plug(Plug, WdfRequestGetFileObject(Request));
+        }
+        break;
+    }
+    case dd::driver::kIoctlUnplug:
+        pContext->Unplug();
+        Status = STATUS_SUCCESS;
+        break;
+    default:
+        break;
+    }
+
+    WdfRequestComplete(Request, Status);
+}
+
+_Use_decl_annotations_ VOID DeuxDisplayFileCleanup(WDFFILEOBJECT FileObject)
+{
+    auto* pWrapper = WdfObjectGet_IndirectDeviceContextWrapper(WdfFileObjectGetDevice(FileObject));
+    if (pWrapper && pWrapper->pContext)
+    {
+        pWrapper->pContext->OnFileCleanup(FileObject);
+    }
 }
 
 #pragma endregion

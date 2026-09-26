@@ -42,6 +42,9 @@ AddReg=DeuxDisplay_HardwareDeviceSettings
 
 [DeuxDisplay_HardwareDeviceSettings]
 HKR,, "UpperFilters", %REG_MULTI_SZ%, "IndirectKmd"
+; SYSTEM and Administrators: full access; interactive users: read/write, so the (non-admin) host
+; can open the device interface to plug/unplug the virtual monitor.
+HKR,, "Security",, "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)"
 ; Dedicated UMDF host process so a driver fault can't take other drivers down with it
 HKR, "WUDF", "DeviceGroupId", %REG_SZ%, "DeuxDisplayIddGroup"
 

@@ -37,7 +37,7 @@
       <AdditionalIncludeDirectories>$(IntDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>dxgi.lib;d3d11.lib;mfplat.lib;mfuuid.lib;mf.lib;ws2_32.lib;swdevice.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>dxgi.lib;d3d11.lib;mfplat.lib;mfuuid.lib;mf.lib;ws2_32.lib;swdevice.lib;cfgmgr32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <FxCompile>
       <ShaderModel>4.0</ShaderModel>

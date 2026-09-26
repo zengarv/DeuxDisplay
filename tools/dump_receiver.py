@@ -9,6 +9,7 @@ Usage: python tools/dump_receiver.py [--port 27183] [--seconds 10] [--out out.h2
 """
 
 import argparse
+import select
 import socket
 import statistics
 import struct
@@ -47,9 +48,11 @@ def recv_message(sock: socket.socket):
     return msg_type, flags, ts, recv_exact(sock, length) if length else b""
 
 
-def hello(width: int, height: int) -> bytes:
+def hello(width: int, height: int, dpi: float) -> bytes:
     name = b"dump_receiver.py"
-    return struct.pack("<IHHHHIIH", MAGIC, 1, width, height, 160, 60000, CODEC_H264, len(name)) + name
+    dpi_milli = int(dpi * 1000)
+    return (struct.pack("<IHHHHIIH", MAGIC, 1, width, height, 360, 60000, CODEC_H264, len(name)) + name
+            + struct.pack("<II", dpi_milli, dpi_milli))
 
 
 def main() -> int:
@@ -58,11 +61,14 @@ def main() -> int:
     ap.add_argument("--port", type=int, default=27183)
     ap.add_argument("--seconds", type=float, default=10.0)
     ap.add_argument("--out", default="out.h264")
+    ap.add_argument("--size", default="2408x1720", help="display size to request (OnePlus Pad Go default)")
+    ap.add_argument("--dpi", type=float, default=260.0, help="physical DPI to report")
     args = ap.parse_args()
+    width, height = (int(v) for v in args.size.lower().split("x"))
 
     sock = socket.create_connection((args.host, args.port))
     sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-    send(sock, HELLO, hello(2408, 1720))
+    send(sock, HELLO, hello(width, height, args.dpi))
 
     msg_type, _, _, payload = recv_message(sock)
     if msg_type != CONFIG:
@@ -76,6 +82,11 @@ def main() -> int:
     deadline = time.monotonic() + args.seconds
     with open(args.out, "wb") as out:
         while time.monotonic() < deadline:
+            # A static desktop produces no frames: wait for data with a timeout, but once a message
+            # starts, read all of it (a timeout mid-message would desync the stream).
+            readable, _, _ = select.select([sock], [], [], 0.25)
+            if not readable:
+                continue
             msg_type, flags, ts, payload = recv_message(sock)
             received = now_us()
             if msg_type == VIDEO_FRAME:
