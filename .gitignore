@@ -1,0 +1,56 @@
+# Visual Studio / MSBuild
+.vs/
+*.user
+*.suo
+*.VC.db
+*.VC.opendb
+*.aps
+*.ipch
+[Dd]ebug/
+[Rr]elease/
+x64/
+ARM64/
+[Oo]bj/
+*.obj
+*.pdb
+*.ilk
+*.tlog
+*.log
+packages/
+*.nupkg
+
+# Driver build outputs
+*.cer
+*.pfx
+*.cat
+
+# Gradle / Android
+.gradle/
+build/
+local.properties
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.keystore
+*.jks
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Local artifacts
+*.h264
+*.hevc
+recordings/
+
+# OS
+Thumbs.db
+.DS_Store

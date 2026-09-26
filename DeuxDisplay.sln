@@ -1,0 +1,28 @@
+
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "DeuxDisplayHost", "host\DeuxDisplayHost.vcxproj", "{6B1E2C4A-8D3F-4E5A-9B7C-1D2E3F4A5B60}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "DeuxDisplayHostTests", "host\tests\DeuxDisplayHostTests.vcxproj", "{A3C5E7F9-1B2D-4F6A-8C0E-2D4F6A8C0E12}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{6B1E2C4A-8D3F-4E5A-9B7C-1D2E3F4A5B60}.Debug|x64.ActiveCfg = Debug|x64
+		{6B1E2C4A-8D3F-4E5A-9B7C-1D2E3F4A5B60}.Debug|x64.Build.0 = Debug|x64
+		{6B1E2C4A-8D3F-4E5A-9B7C-1D2E3F4A5B60}.Release|x64.ActiveCfg = Release|x64
+		{6B1E2C4A-8D3F-4E5A-9B7C-1D2E3F4A5B60}.Release|x64.Build.0 = Release|x64
+		{A3C5E7F9-1B2D-4F6A-8C0E-2D4F6A8C0E12}.Debug|x64.ActiveCfg = Debug|x64
+		{A3C5E7F9-1B2D-4F6A-8C0E-2D4F6A8C0E12}.Debug|x64.Build.0 = Debug|x64
+		{A3C5E7F9-1B2D-4F6A-8C0E-2D4F6A8C0E12}.Release|x64.ActiveCfg = Release|x64
+		{A3C5E7F9-1B2D-4F6A-8C0E-2D4F6A8C0E12}.Release|x64.Build.0 = Release|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal

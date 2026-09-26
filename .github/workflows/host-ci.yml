@@ -1,0 +1,32 @@
+name: host
+
+on:
+  push:
+    branches: [main]
+    paths: ["host/**", "DeuxDisplay.sln", ".github/workflows/host-ci.yml"]
+  pull_request:
+    paths: ["host/**", "DeuxDisplay.sln", ".github/workflows/host-ci.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    strategy:
+      matrix:
+        configuration: [Debug, Release]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: microsoft/setup-msbuild@v2
+      - name: Build
+        run: msbuild DeuxDisplay.sln /p:Configuration=${{ matrix.configuration }} /p:Platform=x64 /m /nologo /v:m
+      - name: Unit tests
+        run: .\host\x64\${{ matrix.configuration }}\DeuxDisplayHostTests.exe
+      - name: Smoke test
+        run: .\host\x64\${{ matrix.configuration }}\DeuxDisplayHost.exe --list-outputs
+      - uses: actions/upload-artifact@v4
+        if: matrix.configuration == 'Release'
+        with:
+          name: DeuxDisplayHost
+          path: host/x64/Release/DeuxDisplayHost.exe
