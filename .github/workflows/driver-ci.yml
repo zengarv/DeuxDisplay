@@ -1,0 +1,33 @@
+name: driver
+
+# Compile-only: installing and exercising the driver needs real hardware and admin rights.
+on:
+  push:
+    branches: [main]
+    paths: ["driver/**", ".github/workflows/driver-ci.yml"]
+  pull_request:
+    paths: ["driver/**", ".github/workflows/driver-ci.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    strategy:
+      matrix:
+        configuration: [Debug, Release]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: microsoft/setup-msbuild@v2
+        with:
+          msbuild-architecture: x64 # the NuGet WDK's InfVerif is 64-bit only
+      - name: Restore WDK NuGet packages
+        run: msbuild driver\DeuxDisplayIdd.sln /t:restore /p:RestorePackagesConfig=true /nologo /v:m
+      - name: Build
+        run: msbuild driver\DeuxDisplayIdd.sln /p:Configuration=${{ matrix.configuration }} /p:Platform=x64 /m /nologo /v:m
+      - uses: actions/upload-artifact@v4
+        if: matrix.configuration == 'Release'
+        with:
+          name: DeuxDisplayIdd-unsigned
+          path: driver/build/x64/Release/DeuxDisplayIdd/

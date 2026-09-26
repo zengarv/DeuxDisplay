@@ -22,15 +22,19 @@ a wired USB connection, optimised for end-to-end latency.
 ## Components
 
 ### Virtual display driver — `driver/`
-An Indirect Display Driver built on IddCx (user-mode, UMDF 2), derived from Microsoft's
-MIT-licensed IddCx sample (see [`driver/THIRD_PARTY_NOTICES.md`](../driver/THIRD_PARTY_NOTICES.md)).
-It creates one virtual monitor whose EDID/mode list describes the target tablet
-(OnePlus Pad Go: 2408×1720, 60/90 Hz). Windows composes the extended desktop onto it like any
-real monitor. The driver's swap-chain processor simply drains frames; the host captures them
-through Desktop Duplication.
+An Indirect Display Driver built on IddCx (user-mode, UMDF 2), derived from Microsoft's IddCx
+sample, which is **MS-PL** licensed, so `driver/` is MS-PL (see
+[`driver/THIRD_PARTY_NOTICES.md`](../driver/THIRD_PARTY_NOTICES.md)). It creates one virtual
+monitor whose EDID/mode list describes the target tablet (OnePlus Pad Go: 2408×1720, 60/90 Hz).
+Windows composes the extended desktop onto it like any real monitor. The driver's swap-chain
+processor simply drains frames; the host captures them through Desktop Duplication.
 
-Local installs use test signing (`scripts/setup-testsigning.ps1`, `scripts/install-driver.ps1`).
-Attestation signing for end users is a possible later step, not a v1 goal.
+The monitor exists only while the host holds a software device (`SwDeviceCreate`) with the
+driver's hardware ID, so it appears when DeuxDisplay runs and disappears when it stops.
+
+Being user-mode, the driver needs no test-signing boot mode for development. A catalog signed
+by a locally trusted certificate is enough (`scripts/install-driver.ps1`). Attestation signing
+for end users is a possible later step, not a v1 goal.
 
 ### Host service — `host/`
 Native C++20, no third-party dependencies beyond the Windows SDK.
@@ -80,6 +84,7 @@ Android Open Accessory protocol could replace ADB later without touching frame h
   less work.
 - **FFmpeg for encoding**: redundant with MF's hardware MFT dispatch, and hardware-encoder
   builds tend to pull in GPL/non-free flags that conflict with an MIT release.
+- **Test-signing mode**: unnecessary for a UMDF driver, and usually blocked by Secure Boot.
 - **C#/.NET host**: GC pauses in the per-frame hot loop and a second debugging model.
 - **HEVC**: USB bandwidth isn't the constraint, and low-latency AVC decode is more uniformly
   supported on Android.

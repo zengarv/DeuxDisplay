@@ -6,7 +6,8 @@ Guidance for Claude Code (and humans) working in this repo.
 DeuxDisplay makes an Android tablet an extended Windows 11 monitor over USB with minimal latency.
 Three parts, one repo:
 
-- `driver/` — IddCx virtual monitor driver (C++, UMDF 2, WDK via NuGet)
+- `driver/` — IddCx virtual monitor driver (C++, UMDF 2, WDK via NuGet). **MS-PL** (derived from
+  Microsoft's sample), unlike the rest of the repo (MIT). `Edid.h` is original MIT code.
 - `host/` — `DeuxDisplayHost.exe`: Desktop Duplication → Media Foundation H.264 → loopback TCP (C++20)
 - `android/` — Kotlin client: TCP → MediaCodec → SurfaceView
 
@@ -16,17 +17,21 @@ Android (`android/.../protocol/`) code must match it, so update the doc in the s
 protocol change.
 
 ## Build & run
-Toolchain: VS 2022 (or Build Tools) with C++ workload. JDK 17, Android SDK and adb come from
-`scripts/bootstrap-dev.ps1`, which installs to `%LOCALAPPDATA%\DeuxDisplay\tools`.
+Toolchain: VS 2022 17.14+ (or Build Tools) with C++ workload, plus the Windows Driver Kit VS
+component for the driver. JDK 17, Android SDK and adb come from `scripts/bootstrap-dev.ps1`,
+which installs to `%LOCALAPPDATA%\DeuxDisplay\tools`.
 
 ```powershell
-# Host (+ tests)
-msbuild DeuxDisplay.sln /p:Configuration=Release /p:Platform=x64 /m
-host\x64\Release\DeuxDisplayHost.exe --list-outputs
+# Host (+ protocol and EDID tests)
+msbuild DeuxDisplay.sln /p:Configuration=Release /p:Platform=x64 /m /nodeReuse:false
 host\x64\Release\DeuxDisplayHostTests.exe
+host\x64\Release\DeuxDisplayHost.exe --list-outputs
+host\x64\Release\DeuxDisplayHost.exe --create-display   # needs the driver installed
 
-# Driver (restores WDK NuGet packages)
-msbuild driver\DeuxDisplayIdd.sln /restore /p:Configuration=Release /p:Platform=x64
+# Driver (WDK from NuGet), then install from an elevated shell
+msbuild driver\DeuxDisplayIdd.sln /t:restore /p:RestorePackagesConfig=true
+msbuild driver\DeuxDisplayIdd.sln /p:Configuration=Release /p:Platform=x64 /nodeReuse:false
+scripts\install-driver.ps1
 
 # Android
 $env:JAVA_HOME = "$env:LOCALAPPDATA\DeuxDisplay\tools\jdk17"
@@ -35,7 +40,9 @@ cd android; .\gradlew.bat assembleDebug lint test
 ```
 
 MSBuild isn't on PATH by default. Use a VS Developer PowerShell, or locate it with
-`vswhere -latest -find MSBuild\**\Bin\MSBuild.exe`.
+`vswhere -latest -find MSBuild\**\Bin\amd64\MSBuild.exe`. Use the **64-bit** MSBuild: the
+driver's NuGet WDK has 64-bit-only InfVerif. Pass `/nodeReuse:false`, because lingering MSBuild
+nodes block Visual Studio installer updates.
 
 ## Rules that matter
 - **Latency is the product.** Don't add buffering, queues, frame pacing, or extra copies in

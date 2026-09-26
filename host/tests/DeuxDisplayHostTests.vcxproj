@@ -31,8 +31,14 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <Import Project="..\Common.props" />
   <ItemGroup>
+    <ClCompile Include="TestMain.cpp" />
     <ClCompile Include="ProtocolTests.cpp" />
+    <ClCompile Include="EdidTests.cpp" />
+    <ClCompile Include="AnnexBTests.cpp" />
+    <ClCompile Include="PointerShapeTests.cpp" />
+    <ClCompile Include="..\src\capture\PointerShape.cpp" />
     <ClCompile Include="..\src\protocol\Protocol.cpp" />
+    <ClCompile Include="..\src\encode\AnnexB.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

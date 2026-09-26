@@ -18,7 +18,9 @@ See [docs/architecture.md](docs/architecture.md) for the design and
 | Transport       | TCP over `adb reverse`, loopback only, `TCP_NODELAY`                      |
 | Client          | Kotlin, MediaCodec async decode → SurfaceView                             |
 | Codec           | H.264 for v1                                                              |
-| License         | MIT                                                                       |
+| License         | MIT; `driver/` is MS-PL because it derives from Microsoft's sample        |
+| Driver signing  | Local self-signed cert for dev (UMDF: no test-signing mode needed)        |
+| Display lifetime| Host creates a software device; monitor exists only while host runs      |
 
 ## v1 non-goals
 
@@ -37,17 +39,19 @@ Input passthrough is the stretch milestone M5.
 - [x] Public GitHub repo `zengarv/DeuxDisplay`
 
 ### M1 — Virtual display visible
-- [ ] Driver sources derived from the IddCx sample, renamed to `DeuxDisplayIdd`
-- [ ] EDID + mode list for 2408×1720 @ 60/90 Hz with correct physical size
-- [ ] Builds via WDK NuGet packages (no WDK install needed); compile-only CI job
-- [ ] Test-signing, install and uninstall scripts
+- [x] Driver sources derived from the IddCx sample, renamed to `DeuxDisplayIdd` (MS-PL)
+- [x] EDID generator + mode list for 2408×1720 @ 60/90 Hz with correct physical size; unit tested
+- [x] Builds via WDK NuGet packages + VS WDK component (64-bit MSBuild); compile-only CI job
+- [x] Install (local cert + pnputil) and uninstall scripts
+- [x] Host `--create-display` (software device) to attach/detach the monitor
 - [ ] **Acceptance:** monitor appears in Display Settings at native resolution; windows can be dragged onto it
 
 ### M2 — Capture → encode → dummy receiver
 - [x] Protocol (de)serialisation + unit tests (host C++ and Android Kotlin, shared test vector)
-- [ ] Desktop Duplication of the virtual output, `ACCESS_LOST` recovery
-- [ ] MF hardware H.264 encoder, low-latency configuration
-- [ ] Loopback TCP server
+- [x] Desktop Duplication of the virtual output (matched by monitor ID `DXD0001`), `ACCESS_LOST` recovery
+- [x] GPU cursor overlay (DDA frames exclude the pointer) + BGRA→NV12 via D3D11 video processor
+- [x] MF hardware H.264 encoder, low-latency configuration (compiles; needs hardware run)
+- [x] Loopback TCP server, `--serve` session loop, SPS/PPS split into `CODEC_CONFIG`
 - [ ] `tools/dump_receiver.py`: speaks the protocol, writes `.h264` playable by ffplay/VLC
 - [ ] **Acceptance:** recorded stream plays back correctly
 

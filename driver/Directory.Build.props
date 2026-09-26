@@ -1,0 +1,13 @@
+﻿<Project>
+  <!--
+    WDK + Windows SDK from NuGet (see DeuxDisplayIdd/packages.config). Mirrors the setup used by
+    microsoft/Windows-driver-samples: the WDK props must be imported before the SDK props.
+  -->
+  <PropertyGroup>
+    <WdkNuGetVersion>10.0.26100.6584</WdkNuGetVersion>
+    <WdkNuGetPackages>$(MSBuildThisFileDirectory)packages\</WdkNuGetPackages>
+  </PropertyGroup>
+  <Import Project="$(WdkNuGetPackages)Microsoft.Windows.WDK.x64.$(WdkNuGetVersion)\build\native\Microsoft.Windows.WDK.x64.props" Condition="Exists('$(WdkNuGetPackages)Microsoft.Windows.WDK.x64.$(WdkNuGetVersion)\build\native\Microsoft.Windows.WDK.x64.props') and '$(Platform)' == 'x64'" />
+  <Import Project="$(WdkNuGetPackages)Microsoft.Windows.SDK.CPP.x64.$(WdkNuGetVersion)\build\native\Microsoft.Windows.SDK.cpp.x64.props" Condition="Exists('$(WdkNuGetPackages)Microsoft.Windows.SDK.CPP.x64.$(WdkNuGetVersion)\build\native\Microsoft.Windows.SDK.cpp.x64.props') and '$(Platform)' == 'x64'" />
+  <Import Project="$(WdkNuGetPackages)Microsoft.Windows.SDK.CPP.$(WdkNuGetVersion)\build\native\Microsoft.Windows.SDK.cpp.props" Condition="Exists('$(WdkNuGetPackages)Microsoft.Windows.SDK.CPP.$(WdkNuGetVersion)\build\native\Microsoft.Windows.SDK.cpp.props')" />
+</Project>

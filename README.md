@@ -60,12 +60,16 @@ msbuild DeuxDisplay.sln /p:Configuration=Release /p:Platform=x64 /m
 ```
 
 ### Driver
+Also needs the VS **Windows Driver Kit** component (VS 17.14+). See
+[driver/README.md](driver/README.md).
 ```powershell
-msbuild driver\DeuxDisplayIdd.sln /restore /p:Configuration=Release /p:Platform=x64
+msbuild driver\DeuxDisplayIdd.sln /t:restore /p:RestorePackagesConfig=true
+msbuild driver\DeuxDisplayIdd.sln /p:Configuration=Release /p:Platform=x64
+.\scripts\install-driver.ps1                               # elevated; no test-signing mode needed
+.\host\x64\Release\DeuxDisplayHost.exe --create-display    # virtual monitor appears
 ```
-Installing an unsigned/test-signed driver requires test-signing mode. Read
-[driver/README.md](driver/README.md) before running the scripts, because enabling test signing
-changes your boot configuration.
+`install-driver.ps1` trusts a locally generated signing certificate on your machine. Read
+[driver/README.md](driver/README.md) first.
 
 ### Android app
 ```powershell
@@ -78,5 +82,6 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
-[MIT](LICENSE). The driver is derived from Microsoft's MIT-licensed IddCx sample; see
+[MIT](LICENSE), except `driver/`, which is derived from Microsoft's IddCx sample and is
+licensed under [MS-PL](driver/LICENSE). See
 [driver/THIRD_PARTY_NOTICES.md](driver/THIRD_PARTY_NOTICES.md).
