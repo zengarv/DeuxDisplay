@@ -39,18 +39,27 @@ class ProtocolTest {
 
     @Test
     fun helloRoundTrip() {
-        val hello = Hello(2408, 1720, 360, 90_000, Protocol.CODEC_MASK_H264, "OnePlus OPD2305")
+        val hello = Hello(2408, 1720, 360, 90_000, Protocol.CODEC_MASK_H264, "OnePlus OPD2305", 260_047, 260_268)
         val bytes = hello.serialize()
-        assertEquals(22 + hello.deviceName.length, bytes.size)
+        assertEquals(30 + hello.deviceName.length, bytes.size)
         assertEquals('D'.code.toByte(), bytes[0])
         assertEquals(hello, Hello.parse(bytes))
         assertEquals(hello, Hello.parse(bytes + byteArrayOf(0x55))) // trailing future fields ignored
     }
 
+    @Test
+    fun helloWithoutOptionalDpi() {
+        val hello = Hello(2408, 1720, 360, 90_000, Protocol.CODEC_MASK_H264, "old client", 1, 2)
+        val bytes = hello.serialize()
+        val parsed = Hello.parse(bytes.copyOf(bytes.size - 8))
+        assertEquals(0, parsed.xdpiMilli)
+        assertEquals("old client", parsed.deviceName)
+    }
+
     @Test(expected = ProtocolException::class)
     fun helloRejectsTruncated() {
         val bytes = Hello(1, 1, 1, 1, 1, "abc").serialize()
-        Hello.parse(bytes.copyOf(bytes.size - 2))
+        Hello.parse(bytes.copyOf(bytes.size - 10)) // cuts into the name
     }
 
     @Test

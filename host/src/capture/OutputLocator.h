@@ -19,8 +19,11 @@ struct LocatedOutput
 // monitor hardware ID MONITOR\DXD0001. Match on that rather than on output order.
 inline constexpr wchar_t kMonitorHardwareId[] = L"DXD0001";
 
-// Returns false if the virtual monitor is not currently attached.
+// Returns false if the virtual monitor is not attached as its own (extended) output.
 bool FindVirtualOutput(LocatedOutput& result);
+
+// True if the virtual monitor is attached but mirroring another display (duplicate mode).
+bool IsVirtualMonitorMirrored();
 
 // Finds an output by GDI device name (e.g. \\.\DISPLAY1). For testing the pipeline on a
 // physical monitor without the driver.

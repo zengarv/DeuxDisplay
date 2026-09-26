@@ -124,6 +124,8 @@ std::vector<uint8_t> SerializeHello(const Hello& msg)
     w.Put(msg.refreshMilliHz);
     w.Put(msg.codecs);
     w.PutString(msg.deviceName);
+    w.Put(msg.xdpiMilli);
+    w.Put(msg.ydpiMilli);
     return w.Take();
 }
 
@@ -137,6 +139,14 @@ std::optional<Hello> ParseHello(std::span<const uint8_t> payload)
         !r.GetString(msg.deviceName))
     {
         return std::nullopt;
+    }
+    // Optional trailing fields: older clients don't send them.
+    uint32_t xdpi = 0;
+    uint32_t ydpi = 0;
+    if (r.Get(xdpi) && r.Get(ydpi))
+    {
+        msg.xdpiMilli = xdpi;
+        msg.ydpiMilli = ydpi;
     }
     return msg;
 }

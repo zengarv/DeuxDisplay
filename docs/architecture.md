@@ -29,8 +29,20 @@ monitor whose EDID/mode list describes the target tablet (OnePlus Pad Go: 2408×
 Windows composes the extended desktop onto it like any real monitor. The driver's swap-chain
 processor simply drains frames; the host captures them through Desktop Duplication.
 
-The monitor exists only while the host holds a software device (`SwDeviceCreate`) with the
-driver's hardware ID, so it appears when DeuxDisplay runs and disappears when it stops.
+**Lifecycle, and no admin at runtime.** Installing (`scripts/install-driver.ps1`, admin, once)
+adds the driver package and creates a *persistent* software device, so the display adapter
+always exists but with no monitor attached. At runtime the host (a normal user) opens the
+driver's device interface (`driver/DeuxDisplayIdd/Public.h`) and sends:
+
+- `PLUG` with the client's resolution, refresh rates and physical size (from `HELLO`). The driver
+  generates a matching EDID and mode list and reports monitor arrival, so any tablet gets a
+  correctly sized, correctly scaled monitor.
+- `UNPLUG` when the client disconnects. If the host dies, closing its handle triggers the
+  driver's file-cleanup callback, which unplugs the monitor, so a crash never strands a phantom
+  display.
+
+Windows sometimes attaches a new monitor in *duplicate* mode. The host detects that and applies
+the "extend" topology (the same as Win+P → Extend), which needs no admin rights.
 
 Being user-mode, the driver needs no test-signing boot mode for development. A catalog signed
 by a locally trusted certificate is enough (`scripts/install-driver.ps1`). Attestation signing
@@ -61,6 +73,16 @@ the host listener over USB. This needs nothing beyond USB debugging, and it is t
 mechanism scrcpy relies on. The protocol is transport-agnostic, so USB tethering (RNDIS) or the
 Android Open Accessory protocol could replace ADB later without touching frame handling.
 
+## Security notes
+
+- The streaming socket binds to 127.0.0.1 only and is unauthenticated. See
+  [wire-protocol.md](wire-protocol.md).
+- The driver's device object grants read/write to interactive users (INF `Security` SDDL), so
+  any logged-in user can plug/unplug the DeuxDisplay monitor. That's harmless (it's their own
+  desktop) and it's what lets the host run without admin rights.
+- `install-driver.ps1` trusts a locally generated code-signing certificate machine-wide. Its
+  private key is non-exportable; `uninstall-driver.ps1 -RemoveCertificate` removes it.
+
 ## v1 constraints (intentional)
 
 - Exactly one ADB device attached (scripts target it via `adb -s <serial>`).
@@ -73,7 +95,8 @@ Android Open Accessory protocol could replace ADB later without touching frame h
 
 | Event                         | v1 behaviour                                                   |
 |-------------------------------|----------------------------------------------------------------|
-| Tablet unplugged / app closed | Host detects socket close, stops encoding, waits for reconnect |
+| Tablet unplugged / app closed | Host detects socket close, unplugs the monitor, waits for reconnect |
+| Host crashes / is killed      | Driver unplugs the monitor when the host's handle closes       |
 | Windows lock / UAC / mode set | Duplication recreated; client gets a fresh keyframe            |
 | Decoder error on client       | Client resets decoder and sends `REQUEST_KEYFRAME`             |
 | Virtual display disabled      | Host waits for the output to reappear                          |

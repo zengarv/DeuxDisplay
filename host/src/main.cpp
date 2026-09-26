@@ -61,20 +61,47 @@ int ListOutputs()
     return 0;
 }
 
-int CreateDisplay()
+int CreateDisplay(unsigned seconds)
 {
     dd::VirtualDisplay display;
-    HRESULT hr = display.Create();
+    HRESULT hr = display.Plug(dd::DefaultPlugRequest());
     if (FAILED(hr))
     {
         std::fwprintf(stderr,
-                      L"Creating the virtual display failed: 0x%08lX\n"
+                      L"Plugging the virtual display failed: 0x%08lX\n"
                       L"Is the driver installed? See driver/README.md.\n",
                       static_cast<unsigned long>(hr));
         return 1;
     }
-    std::wprintf(L"Virtual display attached. Press Enter to remove it.\n");
-    (void)std::getwchar();
+    if (!dd::WaitForExtendedDisplay(8000))
+    {
+        std::fwprintf(stderr, L"The monitor was plugged but didn't become an extended display.\n");
+    }
+    if (seconds > 0)
+    {
+        std::wprintf(L"Virtual display plugged (2408x1720) for %u s.\n", seconds);
+        std::fflush(stdout);
+        Sleep(seconds * 1000);
+    }
+    else
+    {
+        std::wprintf(L"Virtual display plugged (2408x1720). Press Enter to unplug it.\n");
+        (void)std::getwchar();
+    }
+    return 0;
+}
+
+int DeviceCommand(bool install)
+{
+    const HRESULT hr = install ? dd::InstallDevice() : dd::RemoveDevice();
+    if (FAILED(hr))
+    {
+        std::fwprintf(stderr, L"%s failed: 0x%08lX%s\n", install ? L"--install-device" : L"--remove-device",
+                      static_cast<unsigned long>(hr),
+                      hr == E_ACCESSDENIED ? L" (run from an elevated prompt)" : L"");
+        return 1;
+    }
+    std::wprintf(L"%s\n", install ? L"DeuxDisplay device installed." : L"DeuxDisplay device removed.");
     return 0;
 }
 
@@ -82,11 +109,14 @@ void PrintUsage()
 {
     std::wprintf(L"DeuxDisplayHost\n\n"
                  L"Usage:\n"
-                 L"  DeuxDisplayHost --serve [--port N] [--bitrate KBPS] [--no-create-display]\n"
-                 L"      Attach the virtual monitor and stream it to a client on 127.0.0.1:N (default 27183)\n"
-                 L"      --output \\\\.\\DISPLAYn streams an existing monitor instead (debugging, no driver)\n"
+                 L"  DeuxDisplayHost --serve [--port N] [--bitrate KBPS] [--output \\\\.\\DISPLAYn]\n"
+                 L"      Stream to a client on 127.0.0.1:N (default 27183), plugging a virtual monitor that\n"
+                 L"      matches the client. --output streams an existing monitor instead (debugging).\n"
+                 L"  DeuxDisplayHost --create-display [SECONDS]\n"
+                 L"      Plug a 2408x1720 virtual monitor until Enter is pressed (or for SECONDS)\n"
                  L"  DeuxDisplayHost --list-outputs     List DXGI adapters and outputs\n"
-                 L"  DeuxDisplayHost --create-display   Attach the virtual monitor until Enter is pressed\n");
+                 L"  DeuxDisplayHost --install-device   (admin, once) create the persistent virtual display device\n"
+                 L"  DeuxDisplayHost --remove-device    (admin) remove it\n");
 }
 
 bool ParseServeOptions(int argc, wchar_t** argv, dd::ServeOptions& options)
@@ -101,10 +131,6 @@ bool ParseServeOptions(int argc, wchar_t** argv, dd::ServeOptions& options)
         else if (arg == L"--bitrate" && i + 1 < argc)
         {
             options.bitrateKbps = std::wcstoul(argv[++i], nullptr, 10);
-        }
-        else if (arg == L"--no-create-display")
-        {
-            options.createDisplay = false;
         }
         else if (arg == L"--output" && i + 1 < argc)
         {
@@ -135,7 +161,11 @@ int wmain(int argc, wchar_t** argv)
     }
     if (command == L"--create-display")
     {
-        return CreateDisplay();
+        return CreateDisplay(argc >= 3 ? std::wcstoul(argv[2], nullptr, 10) : 0);
+    }
+    if (command == L"--install-device" || command == L"--remove-device")
+    {
+        return DeviceCommand(command == L"--install-device");
     }
     if (command == L"--serve")
     {

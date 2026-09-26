@@ -62,6 +62,8 @@ struct Hello
     uint32_t refreshMilliHz = 0;
     uint32_t codecs = 0;
     std::string deviceName;
+    uint32_t xdpiMilli = 0; // optional, 0 = not sent
+    uint32_t ydpiMilli = 0;
 };
 
 struct Config

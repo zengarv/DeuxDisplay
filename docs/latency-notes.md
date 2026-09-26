@@ -33,6 +33,8 @@ floor for what the tablet can see.
 | 2026-09-26 | Intel Arc (Meteor Lake) QSV MFT, physical 3200×2000@120 via `--output`, bursty desktop (~18 fps) | baseline | acquire 5–10, compose 2.5–3, **encode 23–24**, send 0.3 ms | 27.0 / 45.0 ms |
 | 2026-09-26 | same | `QualityVsSpeed = 0` | encode 20 (all processing, 0 input wait) | 24.5 / 39.6 ms |
 | 2026-09-26 | same | `Flush()` after compose | no change | 24.2 / 38.6 ms |
+| 2026-09-26 | **Virtual monitor** 2408×1720@60 (IddCx), mostly static desktop | — | acquire 1.7, compose 3.2, **encode 12.2**, send 0.2 | 17.5 / 20.2 ms |
+| 2026-09-26 | Virtual monitor 1920×1200@60 | — | acquire 4.5, compose 2.1, encode 10.6, send 0.2 | 14.3 / 24.7 ms |
 
 ### Open leads for M4
 - Encode takes ~20 ms at 6.4 MP even on the fastest preset, with no input wait. Next suspects:

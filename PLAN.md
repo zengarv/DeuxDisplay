@@ -45,11 +45,13 @@ Input passthrough is the stretch milestone M5.
 - [x] Install (local cert + pnputil) and uninstall scripts
 - [x] Host `--create-display` (software device) to attach/detach the monitor
 - [x] Driver package installs (local cert, `pnputil`), verified on the dev PC
-- [ ] **No admin at runtime:** `SwDeviceCreate` needs admin (E_ACCESSDENIED). Instead create a
-      persistent device once at install time, have the driver register a device interface, and
-      let the (non-admin) host plug/unplug the monitor via IOCTL, unplugging automatically when
-      the host's handle closes
-- [ ] **Acceptance:** monitor appears in Display Settings at native resolution; windows can be dragged onto it
+- [x] **No admin at runtime:** persistent device created at install; the host plugs/unplugs the
+      monitor via device-interface IOCTLs; the driver unplugs it when the host's handle closes
+      (verified by killing the host)
+- [x] Monitor built from the client's HELLO (size, refresh, physical mm → EDID + modes); verified
+      with 2408×1720 and 1920×1200 clients
+- [x] Host switches duplicate → extend topology automatically when Windows mirrors the new monitor
+- [x] **Acceptance:** 2408×1720 monitor appears as an extended display (`\\.\DISPLAY39`, 200% scaling)
 
 ### M2 — Capture → encode → dummy receiver
 - [x] Protocol (de)serialisation + unit tests (host C++ and Android Kotlin, shared test vector)

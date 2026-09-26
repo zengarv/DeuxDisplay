@@ -56,7 +56,13 @@ Senders must write header and payload with a single write/send call (see latency
 | 2    | `density_dpi`       | Android `densityDpi`                                     |
 | 4    | `refresh_mhz`       | Panel refresh rate in millihertz (e.g. 90000)            |
 | 4    | `codecs`            | Bitmask of decodable codecs: bit0 = H.264, bit1 = HEVC   |
-| str  | `device_name`       | e.g. `OnePlus OPD2304`                                   |
+| str  | `device_name`       | e.g. `OnePlus OPD2305`                                   |
+| 4    | `xdpi_milli`        | *Optional.* Physical horizontal DPI × 1000 (Android `xdpi`) |
+| 4    | `ydpi_milli`        | *Optional.* Physical vertical DPI × 1000 (Android `ydpi`)   |
+
+The host plugs a virtual monitor matching `width_px` × `height_px` at `refresh_mhz`, with a
+physical size derived from `xdpi_milli`/`ydpi_milli` (falling back to `density_dpi`), so Windows
+picks sensible scaling for any device.
 
 ### `CONFIG` (host → client)
 
