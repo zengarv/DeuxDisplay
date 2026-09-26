@@ -74,6 +74,19 @@ Next levers, by expected perceived gain:
 2. Keep the GPU media engine clocked up (encode 10–12 ms bursty vs ~6 ms sustained).
 3. Try other tablets/decoders. Qualcomm/Exynos decoders usually honor low-latency mode.
 
+## USB transport
+
+Measured 2026-09-27, OnePlus Pad Go, adb 1.0.41, tablet USB config `adb` (charging only).
+
+- The host→tablet hop, from the stream's own telemetry (present→sent vs present→received),
+  is about **2–5 ms per frame** at 10–30 Mbit/s. Glass to glass is ~60–90 ms, so the transport
+  is roughly 5% of it: the MediaTek decoder's fixed ~30 ms and encode dominate.
+- `adb forward` echo (PC→tablet→PC): 64 B p50 4.8 ms. 100 KB p50 16.5 ms (~97 Mbit/s each way),
+  400 KB p50 28.7 ms (~220 Mbit/s). A 32 KB outlier (~50 ms) came from toybox `nc` on the tablet
+  (no TCP_NODELAY), not from adb.
+- Plug and play (host adb watcher + 250 ms app retry): USB drop to tunnel restored 0.7–1.0 s
+  after a USB mode switch, then tunnel to picture 0.14–0.21 s.
+
 ## Wi-Fi
 
 Echo tests (`nc -L cat` on the tablet, TCP_NODELAY client on the PC at 60–200 Hz), OnePlus Pad Go

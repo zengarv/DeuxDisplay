@@ -72,7 +72,8 @@ Input passthrough is the stretch milestone M5.
 - [x] **Acceptance:** Windows' extended desktop (wallpaper, cursor) renders live on the OnePlus Pad Go
 - [ ] Hide the gesture-navigation handle; handle the "no input buffer" drop at decoder start more
       gracefully (wait for the first input buffer instead of dropping the IDR)
-- [ ] Detect/avoid a second adb version (another tool's v40 server kills ours and the reverse tunnel)
+- [x] Detect/avoid a second adb version (another tool's v40 server kills ours and the reverse tunnel):
+      the host's adb watcher reconnects to whatever server runs and re-applies the tunnel (M7)
 
 ### M4 — Measure and tune
 - [x] PING/PONG clock sync and FRAME_STATS instrumentation; host logs end-to-end p50/p95
@@ -106,6 +107,19 @@ USB stays available and the app picks the connection. Design: docs/architecture.
       with the PC as client, and the home LAN with the tablet's low-latency lock held
 - [ ] Encoder for Wi-Fi: cap frame sizes, intra refresh instead of large IDRs, bitrate adaptation
 - [ ] Wi-Fi touch/pen check on hardware; UDP video + FEC only if TCP stalls show up in p95
+
+### M7 — Plug and play (USB)
+Plug the tablet in with the app open and it becomes a monitor, like a cable to a real one.
+- [x] Host `adb/` watcher: `host:track-devices` → `adb reverse` on every attach, re-applied
+      after re-plug / USB mode switch / adb server restart; starts the server; `--no-adb`, `--adb`
+- [x] App retries USB connections every 250 ms
+- [x] `DeuxDisplayAgent.exe` tray app (hidden host, restart on exit, kill-on-close job, log file)
+      and `install-autostart.ps1` (per-user Run key)
+- [x] **Verified on the Pad Go:** USB mode switches (charging ↔ file transfer) recover in ~1 s
+      with nothing run by hand; recovers from `adb kill-server`; killing the agent removes the monitor
+- [ ] Verify a physical unplug/re-plug and a login autostart on hardware
+- [ ] Tray icon artwork and a "Connect over Wi-Fi" toggle in the tray menu
+- [ ] Optional: Android Open Accessory transport (no USB debugging needed, app opens on plug-in)
 
 ### M5 — Input passthrough (stretch)
 - [x] Multi-touch (10 contacts) → `INPUT` touch frames → `InjectTouchInput` mapped to the virtual

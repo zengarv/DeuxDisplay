@@ -60,6 +60,13 @@ Native C++20, no third-party dependencies beyond the Windows SDK.
   (DXGI device manager) where possible.
 - **transport/** — TCP listeners on 127.0.0.1 (USB) and on the host's own access point
   (Wi-Fi), `TCP_NODELAY`, header+payload in one send.
+- **adb/** — follows the adb server's `host:track-devices` stream (smart-socket protocol on
+  127.0.0.1:5037) and applies `adb reverse` to each device as soon as it's attached and
+  authorized. It re-applies after re-plugs, USB mode switches and adb server restarts, and starts
+  the server if none is running.
+- **agent/** (`DeuxDisplayAgent.exe`) — a tray app started at login (per-user Run key, via
+  `scripts/install-autostart.ps1`). It runs the host hidden with `--transport usb`, restarts it
+  if it exits, keeps it in a kill-on-close job, and logs to `%LOCALAPPDATA%\DeuxDisplay\host.log`.
 - **wireless/** — the Wi-Fi Direct access point, the pairing-code store (DPAPI), and WLAN
   tuning (media streaming mode, no background scans) held during Wi-Fi sessions.
 - **protocol/** — message (de)serialisation for [wire-protocol.md](wire-protocol.md).
@@ -76,6 +83,25 @@ The host serves two transports at once; the app picks one (settings panel > Conn
 **USB.** `adb reverse tcp:<port> tcp:<port>` lets the tablet connect to `127.0.0.1:<port>` and
 reach the host listener over USB. This needs nothing beyond USB debugging, and it is the same
 mechanism scrcpy relies on. USB sessions also hand the tablet the pairing code for Wi-Fi.
+
+Plug and play: adb drops reverse tunnels whenever the device re-enumerates (cable re-plugged,
+USB mode switched, adb server restarted). The host's `adb/` watcher re-applies the tunnel as
+soon as the device is back, and the app retries its local connection every 250 ms. Measured on
+the Pad Go: USB drop to tunnel restored 0.7–1.0 s, then tunnel to picture 0.14–0.21 s.
+
+Why adb and not another USB transport (measured 2026-09-27; see
+[latency-notes.md](latency-notes.md#usb-transport)):
+- **adb reverse**: works in any USB mode, needs USB debugging. The host→tablet hop costs about
+  2–5 ms per frame, with 200+ Mbit/s available, against a ~30 Mbit/s stream. This is ~5% of
+  glass-to-glass latency, where the decoder's fixed ~30 ms dominates.
+- **USB tethering (RNDIS/NCM)**: kernel networking instead of adbd's userspace relay, maybe
+  1–2 ms faster. But it has to be switched on by hand on the tablet every time (apps can't), and
+  Windows may start routing internet through the tablet.
+- **MTP ("file transfer")**: a file protocol, not a stream. Not usable.
+- **Android Open Accessory (raw USB bulk)**: the lowest-overhead option (maybe 1–3 ms less),
+  no USB debugging needed, and Android can open the app on plug-in. On Windows it needs a
+  WinUSB driver bound to each device in accessory mode. Worth doing if USB debugging becomes
+  the obstacle for users, not for latency.
 
 **Wi-Fi (direct).** The host starts its own network with `WiFiDirectAdvertisementPublisher` in
 legacy mode (a Wi-Fi Direct group owner that ordinary clients join like a WPA2 access point).
@@ -128,6 +154,8 @@ bypass our encoder and input path. See [latency-notes.md](latency-notes.md#wi-fi
 | Event                         | v1 behaviour                                                   |
 |-------------------------------|----------------------------------------------------------------|
 | Tablet unplugged / app closed | Host detects socket close, unplugs the monitor, waits for reconnect |
+| Tablet plugged in (app open)  | adb watcher restores the tunnel, the app connects, and the monitor appears (~1 s) |
+| USB mode switched / adb server restarted | Same as unplug + plug: display back in ~1 s |
 | Host crashes / is killed      | Driver unplugs the monitor when the host's handle closes       |
 | Windows lock / UAC / mode set | Duplication recreated; client gets a fresh keyframe            |
 | Decoder error on client       | Client resets decoder and sends `REQUEST_KEYFRAME`             |

@@ -30,6 +30,7 @@ flowchart TB
     subgraph PC["Windows 11 PC"]
         Apps["App windows<br/>(extended desktop)"] --> DWM["Desktop Window Manager"]
         DWM --> Monitor["DeuxDisplayIdd virtual monitor<br/>IddCx driver, EDID built from HELLO"]
+        Agent["DeuxDisplayAgent.exe<br/>tray · starts at login<br/>restarts the host"] -. "runs hidden" .-> Host
         subgraph Host["DeuxDisplayHost.exe (C++20)"]
             Display["display/<br/>plug · unplug · force extend"]
             Capture["capture/<br/>DXGI Desktop Duplication"]
@@ -39,9 +40,11 @@ flowchart TB
             Input["input/<br/>TouchTracker → InjectTouchInput"]
             Tcp["transport/<br/>TCP · TCP_NODELAY<br/>127.0.0.1 + access point address"]
             Wireless["wireless/<br/>Wi-Fi Direct access point<br/>pairing code · WLAN tuning"]
+            Adb["adb/<br/>track-devices → adb reverse<br/>on every plug-in"]
             Capture --> Render --> Encode --> Server --> Tcp
             Tcp -- "INPUT" --> Input
             Wireless -. "starts network,<br/>192.168.137.1" .-> Tcp
+            Adb -. "tunnel tcp:27183" .-> Tcp
         end
         Display -- "PLUG / UNPLUG IOCTL" --> Monitor
         Monitor --> Capture
@@ -63,7 +66,8 @@ flowchart TB
 | Part | Where | Job |
 |------|-------|-----|
 | Virtual display driver | `driver/` | Adds a real monitor to Windows, sized to the tablet (MS-PL) |
-| Host | `host/` | Plugs the monitor, captures, encodes, streams, injects touch |
+| Host | `host/` | Plugs the monitor, captures, encodes, streams, injects touch, keeps the USB tunnel up |
+| Agent | `host/agent/` | Tray app that runs the host in the background from login |
 | Android client | `android/` | Connects, decodes to the screen, sends touch and the picked mode |
 | Wire protocol | `docs/wire-protocol.md` | Source of truth for every message both sides exchange |
 | Wi-Fi link | `host/src/wireless/`, `android/.../WifiLink.kt` | The PC's own network, pairing, radio tuning |
@@ -273,17 +277,38 @@ cd android
 .\gradlew.bat assembleDebug
 ```
 
-### Run it
-With the tablet connected over USB (USB debugging on) and the driver installed:
+### Run it: plug and play (USB)
+Once, with the driver installed and the app on the tablet (`.\scripts\run.ps1 -Install` installs it):
 ```powershell
-.\scripts\run.ps1 -Install    # adb reverse + install/launch the app + run the host; Ctrl+C to stop
+.\scripts\install-autostart.ps1    # per user, no admin; -Remove undoes it
 ```
-The tablet shows up as a monitor to the right of your main display. Closing the app or unplugging
-the cable removes it again.
+This starts **DeuxDisplayAgent** now and at every login: a tray icon that keeps the host running
+in the background (log: `%LOCALAPPDATA%\DeuxDisplay\host.log`). From then on it behaves like a
+monitor cable:
 
-**Wireless:** after one USB session (which pairs the tablet), press **Back** on the tablet, set
-**Connection** to *Wi-Fi (direct to PC)* and **Apply**. Approve Android's "connect to
-DeuxDisplay-xxxx" prompt the first time. From then on the cable is optional:
+1. Open DeuxDisplay on the tablet.
+2. Plug in the USB cable. The tablet appears as a monitor to the right of your main display
+   within about a second.
+3. Unplug it, close the app or let the tablet sleep, and the monitor goes away.
+
+Plugging in with the app closed does nothing: the tablet just charges.
+
+- **USB debugging must be on** (Settings > About tablet > tap *Build number* 7 times, then
+  Developer options > USB debugging). The stream travels over adb. The first time, accept
+  *Allow USB debugging* on the tablet and tick *Always allow from this computer*.
+- **Any USB mode works:** *Charging only* (Android's default), *File transfer* and so on. adb runs
+  alongside all of them. Switching modes briefly drops the display, and it comes back by itself.
+- The host re-creates the adb tunnel whenever the tablet (re)appears: cable re-plugged, USB mode
+  switched, or the adb server restarted by another tool. No need to run `adb reverse` yourself.
+
+To try options or watch the log live, exit the agent from the tray and use the console runner
+instead: `.\scripts\run.ps1` (`-Codec hevc`, `-MaxFps 60`, ...). Options can also be set for
+the agent: `.\scripts\install-autostart.ps1 -HostArgs '--codec hevc'`.
+
+**Wireless** (not started in the background): after one USB session, which pairs the tablet,
+exit the agent from the tray. Then press **Back** on the tablet, set **Connection** to *Wi-Fi
+(direct to PC)* and **Apply**. Approve Android's "connect to DeuxDisplay-xxxx" prompt the first
+time. From then on the cable is optional:
 ```powershell
 .\scripts\run.ps1 -Transport Wifi    # or Both (default) / Usb
 ```
