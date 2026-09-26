@@ -30,6 +30,10 @@ object StreamModes {
     private const val MAX_HEIGHT = 4320
     private val RATE_RANGE = 24..240
 
+    // Stream-only rates offered in addition to the panel's own (the panel keeps refreshing at its
+    // current rate). Lower rates save bandwidth/battery but add latency with slow decoders.
+    private val EXTRA_STREAM_RATES = listOf(30)
+
     fun options(activity: Activity): List<ModeOption> =
         options(panelModes(activity)) { w, h -> VideoDecoder.supportsSize(MediaFormat.MIMETYPE_VIDEO_AVC, w, h) }
 
@@ -45,6 +49,7 @@ object StreamModes {
             val hz = mode.refreshHz.roundToInt()
             if (fits(size) && hz in RATE_RANGE) rates.getOrPut(size) { mutableSetOf() }.add(hz)
         }
+        rates.values.forEach { it.addAll(EXTRA_STREAM_RATES) }
         val native = rates.map { (size, hz) -> ModeOption(size.first, size.second, hz.sortedDescending(), true) }
         val largest = native.maxByOrNull { it.width * it.height } ?: return emptyList()
         val scaled = SCALES

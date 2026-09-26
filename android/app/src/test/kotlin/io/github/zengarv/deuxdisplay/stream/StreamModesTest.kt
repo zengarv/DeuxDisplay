@@ -1,4 +1,4 @@
-package io.github.zengarv.deuxdisplay.stream
+﻿package io.github.zengarv.deuxdisplay.stream
 
 import io.github.zengarv.deuxdisplay.stream.StreamModes.PanelMode
 import org.junit.Assert.assertEquals
@@ -13,7 +13,7 @@ class StreamModesTest {
     @Test
     fun nativeSizeIsLandscapeWithAllRates() {
         val options = StreamModes.options(padGo) { _, _ -> true }
-        assertEquals(ModeOption(2408, 1720, listOf(90, 60), native = true), options.first())
+        assertEquals(ModeOption(2408, 1720, listOf(90, 60, 30), native = true), options.first())
     }
 
     @Test
@@ -23,7 +23,7 @@ class StreamModesTest {
             listOf(2408 to 1720, 1806 to 1290, 1204 to 860),
             options.map { it.width to it.height },
         )
-        assertTrue(options.drop(1).all { !it.native && it.refreshRates == listOf(90, 60) })
+        assertTrue(options.drop(1).all { !it.native && it.refreshRates == listOf(90, 60, 30) })
     }
 
     @Test
@@ -32,9 +32,9 @@ class StreamModesTest {
         // 300 Hz is out of range; 1/2 of 1280x800 (640x400) is below 640x480.
         assertEquals(
             listOf(
-                ModeOption(1280, 800, listOf(60), true),
-                ModeOption(960, 600, listOf(60), false),
-                ModeOption(852, 532, listOf(60), false),
+                ModeOption(1280, 800, listOf(60, 30), true),
+                ModeOption(960, 600, listOf(60, 30), false),
+                ModeOption(852, 532, listOf(60, 30), false),
             ),
             options,
         )

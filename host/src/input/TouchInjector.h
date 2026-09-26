@@ -32,7 +32,7 @@ class TouchInjector
     std::mutex m_lock;
     RECT m_target{};
     TouchTracker m_tracker;
-    bool m_loggedFailure = false;
+    int m_failuresLogged = 0;
 };
 
 } // namespace dd::input

@@ -106,11 +106,19 @@ void TouchInjector::Send(const std::vector<ContactEvent>& events)
             info.pressure = std::min<UINT32>(e.pressure, 1024);
         }
     }
-    if (!InjectTouchInput(count, infos.data()) && !m_loggedFailure)
+    if (!InjectTouchInput(count, infos.data()) && m_failuresLogged < 5)
     {
-        // Typical causes: an inconsistent contact sequence, or an elevated window under the finger.
-        Log(L"input: InjectTouchInput failed (%lu)", GetLastError());
-        m_loggedFailure = true;
+        // Typical causes: an inconsistent contact sequence, a point outside the desktop, or an
+        // elevated window under the finger.
+        const DWORD error = GetLastError();
+        ++m_failuresLogged;
+        for (UINT32 i = 0; i < count; ++i)
+        {
+            const auto& p = infos[i].pointerInfo;
+            Log(L"input: InjectTouchInput failed (%lu): id %u flags 0x%X at (%ld,%ld), target (%ld,%ld)-(%ld,%ld)",
+                error, p.pointerId, p.pointerFlags, p.ptPixelLocation.x, p.ptPixelLocation.y, m_target.left,
+                m_target.top, m_target.right, m_target.bottom);
+        }
     }
 }
 
