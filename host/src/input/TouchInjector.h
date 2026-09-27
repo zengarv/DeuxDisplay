@@ -13,11 +13,15 @@ namespace dd::input
 // (InjectTouchInput). No admin rights needed; like any injected input, it can't reach windows
 // of elevated processes (UIPI). Thread-safe: frames arrive on the network reader thread while
 // the capture thread updates the target after mode changes.
+//
+// The process has one injected touch device, shared by all sessions: each injector owns its own
+// range of pointer IDs, and every injected frame also repeats the other sessions' active contacts
+// (Windows expects each frame to list all contacts that are down).
 class TouchInjector
 {
   public:
-    TouchInjector() = default;
-    ~TouchInjector() { ReleaseAll(); }
+    TouchInjector();
+    ~TouchInjector();
     TouchInjector(const TouchInjector&) = delete;
     TouchInjector& operator=(const TouchInjector&) = delete;
 
@@ -30,6 +34,7 @@ class TouchInjector
     void Send(const std::vector<ContactEvent>& events);
 
     std::mutex m_lock;
+    int m_bank = -1; // pointer IDs bank * kMaxTouchContacts + contact; -1 = no bank, touch off
     RECT m_target{};
     TouchTracker m_tracker;
     int m_failuresLogged = 0;

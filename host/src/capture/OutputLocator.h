@@ -15,15 +15,16 @@ struct LocatedOutput
     std::wstring deviceName; // e.g. \\.\DISPLAY3
 };
 
-// The virtual monitor's EDID uses vendor "DXD", product 0x0001, so Windows gives it the
-// monitor hardware ID MONITOR\DXD0001. Match on that rather than on output order.
-inline constexpr wchar_t kMonitorHardwareId[] = L"DXD0001";
+// Each virtual monitor's EDID uses vendor "DXD" and product code index + 1, so Windows gives the
+// monitor on driver connector `index` the hardware ID MONITOR\DXD0001, DXD0002, ... Match on
+// that rather than on output order.
+std::wstring MonitorHardwareId(unsigned index);
 
-// Returns false if the virtual monitor is not attached as its own (extended) output.
-bool FindVirtualOutput(LocatedOutput& result);
+// Returns false if virtual monitor `index` is not attached as its own (extended) output.
+bool FindVirtualOutput(unsigned index, LocatedOutput& result);
 
-// True if the virtual monitor is attached but mirroring another display (duplicate mode).
-bool IsVirtualMonitorMirrored();
+// True if virtual monitor `index` is attached but mirroring another display (duplicate mode).
+bool IsVirtualMonitorMirrored(unsigned index);
 
 // Finds an output by GDI device name (e.g. \\.\DISPLAY1). For testing the pipeline on a
 // physical monitor without the driver.

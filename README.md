@@ -372,6 +372,10 @@ then:
   alongside all of them. Switching modes briefly drops the display, and it comes back by itself.
 - The host re-creates the adb tunnel whenever the tablet (re)appears: cable re-plugged, USB mode
   switched, or the adb server restarted by another tool. No need to run `adb reverse` yourself.
+- **Several devices at once:** plug in up to four tablets or phones (app open on each) and each
+  becomes its own monitor, arranged in Settings > System > Display like any other. They can mix
+  USB and Wi-Fi. Each extra device costs its own capture and hardware encode, so older GPUs may
+  drop frame rate with three or four; a single device streams exactly as before.
 - Only one adb version should run on the PC. Tools that bundle their own `adb.exe` (some
   phone-mirroring apps) keep restarting the adb server and drop the tunnel.
 

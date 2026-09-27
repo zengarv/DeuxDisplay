@@ -142,12 +142,16 @@ HRESULT VirtualDisplay::Plug(const driver::PlugRequest& request)
     }
     DWORD returned = 0;
     driver::PlugRequest copy = request;
-    if (!DeviceIoControl(m_device, driver::kIoctlPlug, &copy, sizeof(copy), nullptr, 0, &returned, nullptr))
+    driver::PlugResult result;
+    if (!DeviceIoControl(m_device, driver::kIoctlPlug, &copy, sizeof(copy), &result, sizeof(result), &returned,
+                         nullptr))
     {
         hr = HRESULT_FROM_WIN32(GetLastError());
         Log(L"display: PLUG ioctl failed 0x%08lX", Hr(hr));
         return hr;
     }
+    // A driver from before multi-monitor support returns nothing and has only connector 0.
+    m_index = returned >= sizeof(result) && result.index < driver::kMaxMonitors ? result.index : 0;
     m_plugged = true;
     return S_OK;
 }
@@ -162,18 +166,18 @@ void VirtualDisplay::Unplug()
     m_plugged = false;
 }
 
-bool WaitForExtendedDisplay(DWORD timeoutMs)
+bool WaitForExtendedDisplay(unsigned index, DWORD timeoutMs)
 {
     bool switchedTopology = false;
     capture::LocatedOutput output;
     for (DWORD waited = 0; waited <= timeoutMs; waited += 100)
     {
-        if (capture::FindVirtualOutput(output))
+        if (capture::FindVirtualOutput(index, output))
         {
-            Log(L"display: virtual monitor is %s", output.deviceName.c_str());
+            Log(L"display: virtual monitor %u is %s", index + 1, output.deviceName.c_str());
             return true;
         }
-        if (!switchedTopology && capture::IsVirtualMonitorMirrored())
+        if (!switchedTopology && capture::IsVirtualMonitorMirrored(index))
         {
             Log(L"display: monitor attached in duplicate mode, switching to extend");
             const LONG result = SetDisplayConfig(0, nullptr, 0, nullptr, SDC_APPLY | SDC_TOPOLOGY_EXTEND);

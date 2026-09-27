@@ -75,12 +75,13 @@ struct Pipeline
     uint16_t rotation = 0; // clockwise degrees the client applies (CONFIG)
     UINT fps = 60;
 
-    HRESULT Initialize(const ServeOptions& options, bool preferHevc)
+    // `monitorIndex`: which virtual monitor this session streams (VirtualDisplay::Index()).
+    HRESULT Initialize(const ServeOptions& options, bool preferHevc, unsigned monitorIndex)
     {
         const unsigned bitrateKbps = options.bitrateKbps;
         encoder.Shutdown();
         device.Reset();
-        const bool found = options.outputName.empty() ? capture::FindVirtualOutput(output)
+        const bool found = options.outputName.empty() ? capture::FindVirtualOutput(monitorIndex, output)
                                                       : capture::FindOutputByName(options.outputName, output);
         if (!found)
         {
@@ -438,8 +439,10 @@ bool Authenticate(transport::Connection& conn, const protocol::AuthKey& key)
     return conn.Send(MessageType::AuthOk, 0, NowMicros(), protocol::SerializeMac(proof));
 }
 
+// One client, start to finish. Runs on its own thread; concurrent sessions each plug their own
+// virtual monitor and share nothing on the frame path.
 void RunSession(transport::Connection& conn, Transport transport, const PairingContext* pairing,
-                const ServeOptions& serveOptions, VirtualDisplay& display)
+                const ServeOptions& serveOptions)
 {
     // Held for the whole Wi-Fi session: keeps the PC's radio awake and on-channel.
     std::optional<wireless::WlanTuning> wlanTuning;
@@ -489,11 +492,7 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
     }
 
     // Declared before the pipeline so the monitor is unplugged after capture/encode shut down.
-    struct UnplugOnExit
-    {
-        VirtualDisplay& display;
-        ~UnplugOnExit() { display.Unplug(); }
-    } unplugOnExit{display};
+    VirtualDisplay display;
 
     if (options.outputName.empty())
     {
@@ -510,19 +509,19 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
         }
         if (FAILED(plugged))
         {
-            Log(L"session: plugging the virtual monitor failed 0x%08lX. Is the driver installed? "
-                L"See driver/README.md.",
+            Log(L"session: plugging the virtual monitor failed 0x%08lX. Is the driver installed and up to "
+                L"date (older drivers show one display at a time)? See driver/README.md.",
                 Hr(plugged));
             conn.Send(MessageType::Bye, 0, NowMicros(), {});
             return;
         }
-        Log(L"session: plugged %ux%u @ %u Hz, %ux%u mm", request.width, request.height, request.refreshHz[0],
-            request.widthMm, request.heightMm);
-        if (!WaitForExtendedDisplay(8000))
+        Log(L"session: plugged monitor %u: %ux%u @ %u Hz, %ux%u mm", display.Index() + 1, request.width,
+            request.height, request.refreshHz[0], request.widthMm, request.heightMm);
+        if (!WaitForExtendedDisplay(display.Index(), 8000))
         {
             Log(L"session: the monitor did not appear as an extended display (looking for %s). "
                 L"Check Settings > System > Display.",
-                capture::kMonitorHardwareId);
+                capture::MonitorHardwareId(display.Index()).c_str());
             conn.Send(MessageType::Bye, 0, NowMicros(), {});
             return;
         }
@@ -532,7 +531,7 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
     const bool clientHevc = (hello->codecs & protocol::kCodecMaskHevc) != 0;
     const bool clientH264 = (hello->codecs & protocol::kCodecMaskH264) != 0;
     const bool preferHevc = clientHevc && (options.codec != L"h264" || !clientH264);
-    HRESULT hr = pipeline.Initialize(options, preferHevc);
+    HRESULT hr = pipeline.Initialize(options, preferHevc, display.Index());
     if (FAILED(hr))
     {
         Log(L"session: pipeline init failed 0x%08lX", Hr(hr));
@@ -561,7 +560,9 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
     std::atomic<bool> stop{false};
     std::atomic<bool> keyframeRequested{false};
     std::atomic<int> requestedOrientation{-1}; // degrees from the client, -1 = none pending
+    std::wstring logTag = t_logTag;
     std::thread reader([&] {
+        SetLogTag(logTag.c_str());
         protocol::Header h;
         std::vector<uint8_t> p;
         ClientStats clientStats;
@@ -699,7 +700,7 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
             const UINT oldHeight = pipeline.height;
             const UINT oldFps = pipeline.fps;
             const uint16_t oldRotation = pipeline.rotation;
-            while (!stop && FAILED(pipeline.Initialize(options, preferHevc)))
+            while (!stop && FAILED(pipeline.Initialize(options, preferHevc, display.Index())))
             {
                 Sleep(250);
             }
@@ -780,8 +781,78 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
     stop = true;
     conn.Shutdown();
     reader.join();
-    Log(L"session: ended");
 }
+
+// A session on its own thread. The main thread keeps accepting, so more clients can join.
+struct SessionThread
+{
+    std::unique_ptr<transport::Connection> conn;
+    unsigned number = 0; // 1-based, reused once free; tags the session's log lines
+    std::atomic<bool> done{false};
+    std::thread thread;
+};
+
+class Sessions
+{
+  public:
+    Sessions() = default;
+    Sessions(const Sessions&) = delete;
+    Sessions& operator=(const Sessions&) = delete;
+
+    ~Sessions()
+    {
+        for (auto& s : m_sessions)
+        {
+            s->conn->Shutdown();
+        }
+        for (auto& s : m_sessions)
+        {
+            s->thread.join();
+        }
+    }
+
+    // Joins the threads of sessions that have ended. Returns how many are still running.
+    size_t Reap()
+    {
+        std::erase_if(m_sessions, [](const std::unique_ptr<SessionThread>& s) {
+            if (!s->done)
+            {
+                return false;
+            }
+            s->thread.join();
+            return true;
+        });
+        return m_sessions.size();
+    }
+
+    void Start(std::unique_ptr<transport::Connection> conn, Transport transport, const PairingContext* pairing,
+               const ServeOptions& options)
+    {
+        auto session = std::make_unique<SessionThread>();
+        session->conn = std::move(conn);
+        for (unsigned n = 1;; ++n)
+        {
+            if (std::none_of(m_sessions.begin(), m_sessions.end(), [n](const auto& s) { return s->number == n; }))
+            {
+                session->number = n;
+                break;
+            }
+        }
+        SessionThread* s = session.get();
+        s->thread = std::thread([s, transport, pairing, &options] {
+            wchar_t tag[16];
+            swprintf_s(tag, L"[%u] ", s->number);
+            SetLogTag(tag);
+            RunSession(*s->conn, transport, pairing, options);
+            Log(L"session: ended");
+            s->done = true;
+        });
+        m_sessions.push_back(std::move(session));
+    }
+
+  private:
+    std::vector<std::unique_ptr<SessionThread>> m_sessions;
+};
 
 } // namespace
 
@@ -794,7 +865,6 @@ int Serve(const ServeOptions& options)
         return 1;
     }
 
-    VirtualDisplay display;
     if (!options.outputName.empty())
     {
         capture::LocatedOutput output;
@@ -876,6 +946,12 @@ int Serve(const ServeOptions& options)
         return 1;
     }
 
+    // One session per client, each with its own virtual monitor, up to the driver's limit. A
+    // debug --output session streams an existing display, so only one of those at a time.
+    const size_t maxSessions = options.outputName.empty() ? driver::kMaxMonitors : 1;
+    Sessions sessions;
+    bool loggedFull = false;
+
     bool announce = true;
     for (;;)
     {
@@ -923,6 +999,7 @@ int Serve(const ServeOptions& options)
 
         if (ready == 0)
         {
+            sessions.Reap();
             if (options.wifi && pairing && !accessPoint.Running())
             {
                 Log(L"wifi: access point down, restarting it");
@@ -938,9 +1015,20 @@ int Serve(const ServeOptions& options)
             Log(L"accept failed (%d)", WSAGetLastError());
             continue;
         }
-        RunSession(*conn, fromUsb ? Transport::Usb : Transport::Wifi, pairing ? &*pairing : nullptr, options,
-                   display);
-        announce = true;
+        if (sessions.Reap() >= maxSessions)
+        {
+            // Clients retry, so say it once per busy spell.
+            if (!loggedFull)
+            {
+                Log(L"session: rejecting clients, all %zu displays are in use", maxSessions);
+                loggedFull = true;
+            }
+            conn->Send(MessageType::Bye, 0, NowMicros(), {});
+            continue;
+        }
+        loggedFull = false;
+        sessions.Start(std::move(conn), fromUsb ? Transport::Usb : Transport::Wifi, pairing ? &*pairing : nullptr,
+                       options);
     }
 }
 

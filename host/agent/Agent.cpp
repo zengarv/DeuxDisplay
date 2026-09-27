@@ -15,6 +15,7 @@
 #include <atomic>
 #include <cstdio>
 #include <filesystem>
+#include <map>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -66,22 +67,53 @@ void UpdateTrayIcon(DWORD action)
     Shell_NotifyIconW(action, &icon);
 }
 
+// Connected clients by session tag ("[2] "), from the host's log. Reader thread only.
+std::map<std::string, std::string> g_clients;
+
+// The session tag at the start of a host log line's message, e.g. "[2]" (empty if none).
+std::string SessionTag(const std::string& line, size_t messageStart)
+{
+    const size_t open = line.rfind('[', messageStart);
+    const size_t close = open == std::string::npos ? std::string::npos : line.find(']', open);
+    return close == std::string::npos || close > messageStart ? std::string{} : line.substr(open, close - open + 1);
+}
+
 // The tray state follows the host's session log lines.
 void OnHostLine(const std::string& line)
 {
     const size_t client = line.find("session: client \"");
+    const size_t ended = line.find("session: ended");
     if (client != std::string::npos)
     {
         const size_t start = client + 17;
         const size_t end = line.find('"', start);
-        const std::string name = line.substr(start, end == std::string::npos ? std::string::npos : end - start);
-        SetTooltip(L"DeuxDisplay: showing on " + std::wstring(name.begin(), name.end()));
+        g_clients[SessionTag(line, client)] =
+            line.substr(start, end == std::string::npos ? std::string::npos : end - start);
     }
-    else if (line.find("session: ended") != std::string::npos ||
-             line.find("waiting for a client") != std::string::npos)
+    else if (ended != std::string::npos)
+    {
+        g_clients.erase(SessionTag(line, ended));
+    }
+    else if (line.find("waiting for a client") != std::string::npos)
+    {
+        g_clients.clear(); // host (re)started
+    }
+    else
+    {
+        return;
+    }
+
+    if (g_clients.empty())
     {
         SetTooltip(L"DeuxDisplay: waiting for a tablet (plug in with the app open)");
+        return;
     }
+    std::string names;
+    for (const auto& [tag, name] : g_clients)
+    {
+        names += (names.empty() ? "" : ", ") + name;
+    }
+    SetTooltip(L"DeuxDisplay: showing on " + std::wstring(names.begin(), names.end()));
 }
 
 HANDLE OpenLog()

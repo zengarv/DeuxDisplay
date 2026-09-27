@@ -170,7 +170,7 @@ bool Listener::Listen(uint16_t port, const in_addr& address)
     addr.sin_addr = address;
 
     if (bind(m_socket, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR ||
-        listen(m_socket, 1) == SOCKET_ERROR)
+        listen(m_socket, 4) == SOCKET_ERROR) // several clients may connect at once (one per display)
     {
         Close();
         return false;

@@ -75,7 +75,7 @@ int CreateDisplay(unsigned seconds)
                       static_cast<unsigned long>(hr));
         return 1;
     }
-    if (!dd::WaitForExtendedDisplay(8000))
+    if (!dd::WaitForExtendedDisplay(display.Index(), 8000))
     {
         std::fwprintf(stderr, L"The monitor was plugged but didn't become an extended display.\n");
     }

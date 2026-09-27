@@ -25,7 +25,8 @@ a wired USB connection, optimised for end-to-end latency.
 An Indirect Display Driver built on IddCx (user-mode, UMDF 2), derived from Microsoft's IddCx
 sample, which is **MS-PL** licensed, so `driver/` is MS-PL (see
 [`driver/THIRD_PARTY_NOTICES.md`](../driver/THIRD_PARTY_NOTICES.md)). It creates one virtual
-monitor whose EDID/mode list describes the target tablet (OnePlus Pad Go: 2408×1720, 60/90 Hz).
+monitor per connected client (up to four), each with an EDID/mode list describing that device
+(e.g. OnePlus Pad Go: 2408×1720, 60/90 Hz).
 Windows composes the extended desktop onto it like any real monitor. The driver's swap-chain
 processor simply drains frames; the host captures them through Desktop Duplication.
 
@@ -40,6 +41,14 @@ driver's device interface (`driver/DeuxDisplayIdd/Public.h`) and sends:
 - `UNPLUG` when the client disconnects. If the host dies, closing its handle triggers the
   driver's file-cleanup callback, which unplugs the monitor, so a crash never strands a phantom
   display.
+
+**Several devices at once.** Each driver handle owns at most one monitor, and the host opens one
+handle per session, so every client gets its own monitor and `UNPLUG` or a closed handle only
+removes that client's monitor. The driver hands out the lowest free connector index (0–3), and
+returns it from `PLUG`. The EDID product code is index + 1, so Windows names the monitors
+`MONITOR\DXD0001`, `DXD0002`, …, and the host finds each session's output by that hardware ID.
+A lone client always gets index 0, the same monitor identity (and remembered arrangement) as
+before multi-display support. A host that doesn't ask for the index still works, on index 0.
 
 Windows sometimes attaches a new monitor in *duplicate* mode. The host detects that and applies
 the "extend" topology (the same as Win+P → Extend), which needs no admin rights.
@@ -70,6 +79,15 @@ Native C++20, no third-party dependencies beyond the Windows SDK.
 - **wireless/** — the Wi-Fi Direct access point, the pairing-code store (DPAPI), and WLAN
   tuning (media streaming mode, no background scans) held during Wi-Fi sessions.
 - **protocol/** — message (de)serialisation for [wire-protocol.md](wire-protocol.md).
+
+**Sessions.** The main thread only accepts connections; each client runs on its own session
+thread with its own virtual monitor, D3D device, duplication, encoder and socket, so sessions
+share nothing on the frame path and one device streams exactly as it would alone. Every USB
+device tunnels to the same port (`adb reverse` is applied to each), which is fine because
+sessions are told apart by connection, not by port. Log lines carry a session tag (`[1]`,
+`[2]`, …). The one shared piece is touch: Windows gives a process one injected touch device, so
+sessions use separate pointer-ID ranges and each injected frame repeats the other sessions'
+fingers that are still down.
 
 ### Android client — `android/`
 Kotlin, minSdk 26, targets API 35. A single full-screen, orientation-locked activity with a
@@ -142,8 +160,9 @@ bypass our encoder and input path. See [latency-notes.md](latency-notes.md#wi-fi
 
 ## v1 constraints (intentional)
 
-- Exactly one ADB device attached (scripts target it via `adb -s <serial>`).
-- One virtual display, one fixed landscape mode, SDR only.
+- `scripts/run.ps1` installs and launches the app on one ADB device (`-Serial` when several are
+  attached); the host itself serves every attached device.
+- Up to four virtual displays (one per client), each in one fixed landscape mode, SDR only.
 - No audio. Input passthrough (M5) covers touch only: `INPUT` touch frames are injected with
   Windows touch injection on the virtual display; pen is not forwarded yet.
 - The cursor is composited into the video frame. A separate cursor channel (`CURSOR` message)

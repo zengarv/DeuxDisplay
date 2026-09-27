@@ -1,5 +1,7 @@
 #include "OutputLocator.h"
 
+#include <cstdio>
+
 using Microsoft::WRL::ComPtr;
 
 namespace dd::capture
@@ -53,9 +55,17 @@ template <typename Predicate> bool FindOutput(Predicate matches, LocatedOutput& 
 
 } // namespace
 
-bool IsVirtualMonitorMirrored()
+std::wstring MonitorHardwareId(unsigned index)
+{
+    wchar_t id[16] = {};
+    swprintf_s(id, L"DXD%04X", index + 1);
+    return id;
+}
+
+bool IsVirtualMonitorMirrored(unsigned index)
 {
     // In duplicate mode our monitor shares a source (e.g. \\.\DISPLAY1) with another monitor.
+    const std::wstring hardwareId = MonitorHardwareId(index);
     DISPLAY_DEVICEW adapter{};
     adapter.cb = sizeof(adapter);
     for (DWORD a = 0; EnumDisplayDevicesW(nullptr, a, &adapter, 0); ++a)
@@ -69,7 +79,7 @@ bool IsVirtualMonitorMirrored()
             if (monitor.StateFlags & DISPLAY_DEVICE_ACTIVE)
             {
                 ++active;
-                ours = ours || std::wstring(monitor.DeviceID).find(kMonitorHardwareId) != std::wstring::npos;
+                ours = ours || std::wstring(monitor.DeviceID).find(hardwareId) != std::wstring::npos;
             }
         }
         if (ours && active > 1)
@@ -80,11 +90,12 @@ bool IsVirtualMonitorMirrored()
     return false;
 }
 
-bool FindVirtualOutput(LocatedOutput& result)
+bool FindVirtualOutput(unsigned index, LocatedOutput& result)
 {
     // Only an output driven by our monitor alone counts; a mirrored source is someone else's image.
+    const std::wstring hardwareId = MonitorHardwareId(index);
     return FindOutput(
-        [](const DXGI_OUTPUT_DESC& desc) {
+        [&](const DXGI_OUTPUT_DESC& desc) {
             int active = 0;
             bool ours = false;
             DISPLAY_DEVICEW monitor{};
@@ -94,7 +105,7 @@ bool FindVirtualOutput(LocatedOutput& result)
                 if (monitor.StateFlags & DISPLAY_DEVICE_ACTIVE)
                 {
                     ++active;
-                    ours = ours || std::wstring(monitor.DeviceID).find(kMonitorHardwareId) != std::wstring::npos;
+                    ours = ours || std::wstring(monitor.DeviceID).find(hardwareId) != std::wstring::npos;
                 }
             }
             return ours && active == 1;

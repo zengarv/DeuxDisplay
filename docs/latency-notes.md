@@ -114,6 +114,23 @@ Findings:
 - Next: a newer Intel driver; the tablet as access point (Android LocalOnlyHotspot) with the PC
   joining as a client; the router path with the app's low-latency lock held.
 
+## Several devices at once
+
+Host pipeline under a steady full-screen animation (~57 fps), USB, dev PC (Intel iGPU, Quick
+Sync), 2026-09-27. Averages over two-second windows (9 per single-device run, 4 for two at once).
+
+| Run | Device | Codec | fps | present→sent | present→decoded p50 |
+|-----|--------|-------|----:|-------------:|--------------------:|
+| Before multi-display, alone | OnePlus Pad Go 2408x1720 | H.264 | 56.4 | 21.6 ms | 66.7 ms |
+| After, alone | OnePlus Pad Go 2408x1720 | H.264 | 57.3 | 21.6 ms | 66.5 ms |
+| After, two at once | OnePlus Pad Go 2408x1720 | H.264 | 57.4 | 17.7 ms | 63.0 ms |
+| After, two at once | Android phone 2392x1080 | HEVC | 57.5 | 14.6 ms | 27.4 ms |
+
+- A lone device streams exactly as before: sessions only add a thread, and nothing on the frame
+  path is shared.
+- Two devices don't slow each other down on this iGPU. The Pad Go's encode even got faster
+  (12.4 → 8.3 ms), most likely because the GPU clocks higher with more load.
+
 ### Open leads for M4
 - Encode takes ~20 ms at 6.4 MP even on the fastest preset, with no input wait. Next suspects:
   GPU clock ramp-up under bursty load, MFT internal async depth

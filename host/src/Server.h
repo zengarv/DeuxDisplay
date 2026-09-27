@@ -37,7 +37,8 @@ struct ServeOptions
 };
 
 // Runs until the process is terminated. For each client: plugs a virtual monitor matching the
-// client's HELLO, streams it, and unplugs it when the client disconnects.
+// client's HELLO, streams it, and unplugs it when the client disconnects. Clients are served
+// concurrently, one monitor each, up to driver::kMaxMonitors.
 int Serve(const ServeOptions& options);
 
 } // namespace dd
