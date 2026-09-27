@@ -31,8 +31,9 @@ git tag v0.2.0; git push origin v0.2.0      # v0.2.0-rc1 publishes a pre-release
 ```
 
 The workflow builds the host, agent, driver package and APK, runs the unit tests, and publishes
-`DeuxDisplay-<version>-win-x64.zip`, `DeuxDisplay-<version>.apk` and `SHA256SUMS.txt` to a GitHub
-Release with generated notes. The APK's `versionName`/`versionCode` come from the tag.
+`DeuxDisplay-<version>-win-x64.zip` (the PC side: host, agent, driver package, scripts),
+`DeuxDisplay-<version>.apk` and `SHA256SUMS.txt` to a GitHub Release with generated notes. The
+APK's `versionName`/`versionCode` come from the tag.
 
 The APK is release-signed when these repository secrets are set (otherwise it's debug-signed, and
 users have to uninstall the app before installing the next release):

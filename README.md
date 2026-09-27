@@ -257,10 +257,14 @@ see [docs/latency-notes.md](docs/latency-notes.md).
 ### 1. Get DeuxDisplay
 
 **Option A: prebuilt release (no build tools needed).** From
-[Releases](https://github.com/zengarv/DeuxDisplay/releases), download
-`DeuxDisplay-<version>-win-x64.zip` and extract it. It contains the host, the tray agent, the
-driver package, the scripts and the app (`DeuxDisplay.apk`), in the same layout as a source
-checkout, so every command below works from the extracted folder. Then:
+[Releases](https://github.com/zengarv/DeuxDisplay/releases), download:
+
+- `DeuxDisplay-<version>-win-x64.zip` for the PC: the host, the tray agent, the driver package
+  and the scripts, in the same layout as a source checkout, so every command below works from
+  the extracted folder.
+- `DeuxDisplay-<version>.apk` for the tablet (installing it is covered in step 4).
+
+Extract the zip, then:
 
 ```powershell
 cd DeuxDisplay-<version>
@@ -327,8 +331,11 @@ cd android; .\gradlew.bat assembleDebug; cd ..
 .\scripts\run.ps1 -Install          # installs, launches, and starts streaming over USB; Ctrl+C stops
 ```
 
-With a release you can also copy `DeuxDisplay.apk` to the tablet and open it there (allow
-installing unknown apps when asked).
+With a release, either put `DeuxDisplay-<version>.apk` in the extracted folder so
+`run.ps1 -Install` finds it, or install it on the tablet directly: open the Releases page in the
+tablet's browser, download the APK and open it (allow installing unknown apps when asked).
+Newer releases install over older ones. The one exception is v0.1.0, which was signed with a
+different key: uninstall it once before installing a later version.
 
 `install-driver.ps1` trusts a locally generated signing certificate on your PC; read
 [driver/README.md](driver/README.md) first. To check the driver alone:

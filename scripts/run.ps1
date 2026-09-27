@@ -42,7 +42,12 @@ Set-StrictMode -Version Latest
 $RepoRoot = Split-Path $PSScriptRoot -Parent
 $HostExe = Join-Path $RepoRoot "host\x64\$Configuration\DeuxDisplayHost.exe"
 $Apk = Join-Path $RepoRoot 'android\app\build\outputs\apk\debug\app-debug.apk'
-if (-not (Test-Path $Apk)) { $Apk = Join-Path $RepoRoot 'DeuxDisplay.apk' } # prebuilt release
+if (-not (Test-Path $Apk)) {
+    # Prebuilt release: the APK downloaded next to the scripts (DeuxDisplay-<version>.apk)
+    $released = Get-ChildItem $RepoRoot -Filter 'DeuxDisplay*.apk' -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if ($released) { $Apk = $released.FullName }
+}
 
 $adbCommand = Get-Command adb -ErrorAction SilentlyContinue
 $adb = if ($adbCommand) { $adbCommand.Source } else { $null }

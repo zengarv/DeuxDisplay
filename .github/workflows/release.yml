@@ -116,7 +116,6 @@ jobs:
         run: |
           set -e
           ver="${GITHUB_REF_NAME#v}"
-          cp android/DeuxDisplay.apk windows/DeuxDisplay/DeuxDisplay.apk
           mv windows/DeuxDisplay "DeuxDisplay-$ver"
           zip -r -q "DeuxDisplay-$ver-win-x64.zip" "DeuxDisplay-$ver"
           cp android/DeuxDisplay.apk "DeuxDisplay-$ver.apk"
