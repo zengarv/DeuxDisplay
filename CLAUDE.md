@@ -11,7 +11,6 @@ Three parts, one repo:
 - `host/` — `DeuxDisplayHost.exe`: Desktop Duplication → Media Foundation H.264 → loopback TCP (C++20)
 - `android/` — Kotlin client: TCP → MediaCodec → SurfaceView
 
-`PLAN.md` holds milestones and status; tick checkboxes there when finishing work.
 `docs/wire-protocol.md` is the source of truth for the protocol. Host (`host/src/protocol/`) and
 Android (`android/.../protocol/`) code must match it, so update the doc in the same commit as any
 protocol change.

@@ -8,8 +8,8 @@ that monitor with Desktop Duplication, hardware-encodes it to H.264/HEVC in low-
 streams it to an Android app that decodes straight to the screen. The stream travels over an ADB
 USB tunnel, or over a private Wi-Fi network the PC creates itself (no router in between).
 
-> **Status: early development, working end to end on the reference device.** See
-> [PLAN.md](PLAN.md) for milestones. Not yet packaged for end users.
+> **Status: early development, working end to end on the reference device.** Prebuilt
+> downloads are on the [Releases](https://github.com/zengarv/DeuxDisplay/releases) page.
 
 Reference hardware: OnePlus Pad Go (2408×1720 @ 90 Hz). Other Windows 11 PCs and Android 8+
 devices are meant to work too.
@@ -252,24 +252,37 @@ Everything after step 4 runs without admin rights.
 \* Capture to "received on the tablet", p50, reference hardware. Decoding and display add more;
 see [docs/latency-notes.md](docs/latency-notes.md).
 
-### 1. Get the code
+### 1. Get DeuxDisplay
 
-There are no prebuilt releases yet. Clone the repository (or use **Code > Download ZIP** on
-GitHub and extract it):
+**Option A: prebuilt release (no build tools needed).** From
+[Releases](https://github.com/zengarv/DeuxDisplay/releases), download
+`DeuxDisplay-<version>-win-x64.zip` and extract it. It contains the host, the tray agent, the
+driver package, the scripts and the app (`DeuxDisplay.apk`), in the same layout as a source
+checkout, so every command below works from the extracted folder. Then:
+
+```powershell
+cd DeuxDisplay-<version>
+Get-ChildItem -Recurse | Unblock-File            # Windows marks downloaded files as untrusted
+Set-ExecutionPolicy -Scope Process Bypass        # allow the scripts; repeat in each new shell
+winget install Google.PlatformTools              # adb, needed for USB (open a new shell after)
+```
+
+Skip the PC setup in step 2 and all of step 3. The driver is signed on your PC during install
+(step 4), as with a source build.
+
+**Option B: build from source.** Clone the repository:
 
 ```powershell
 git clone https://github.com/zengarv/DeuxDisplay.git
 cd DeuxDisplay
 ```
 
-Every push is built by CI. The **Actions** tab has artifacts from the latest run (the app's
-`app-debug` APK, `DeuxDisplayHost`, and an unsigned driver package), which is handy for grabbing
-just the APK. The driver still has to be built and signed on your PC (step 4), so build from
-source for a working setup.
+Every push is also built by CI. The **Actions** tab has artifacts from the latest run (the app's
+`app-debug` APK, `DeuxDisplayHost`, and an unsigned driver package).
 
 ### 2. One-time setup
 
-**PC** (Windows 11 x64):
+**PC** (Windows 11 x64; source builds only):
 - Visual Studio 2022 or **Build Tools 2022** (17.14+) with **Desktop development with C++**
   (MSVC v143, Windows 11 SDK), plus the **Windows Driver Kit** component
   (`Component.Microsoft.Windows.DriverKit.BuildTools` for Build Tools). The WDK itself comes from
@@ -311,6 +324,9 @@ cd android; .\gradlew.bat assembleDebug; cd ..
 # Normal PowerShell: install the app on the tablet (plugged in over USB)
 .\scripts\run.ps1 -Install          # installs, launches, and starts streaming over USB; Ctrl+C stops
 ```
+
+With a release you can also copy `DeuxDisplay.apk` to the tablet and open it there (allow
+installing unknown apps when asked).
 
 `install-driver.ps1` trusts a locally generated signing certificate on your PC; read
 [driver/README.md](driver/README.md) first. To check the driver alone:

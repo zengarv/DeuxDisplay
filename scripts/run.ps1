@@ -42,6 +42,7 @@ Set-StrictMode -Version Latest
 $RepoRoot = Split-Path $PSScriptRoot -Parent
 $HostExe = Join-Path $RepoRoot "host\x64\$Configuration\DeuxDisplayHost.exe"
 $Apk = Join-Path $RepoRoot 'android\app\build\outputs\apk\debug\app-debug.apk'
+if (-not (Test-Path $Apk)) { $Apk = Join-Path $RepoRoot 'DeuxDisplay.apk' } # prebuilt release
 
 $adbCommand = Get-Command adb -ErrorAction SilentlyContinue
 $adb = if ($adbCommand) { $adbCommand.Source } else { $null }
@@ -51,7 +52,7 @@ if (-not $adb) {
 }
 if (-not (Test-Path $HostExe)) { throw "Host not built: $HostExe" }
 $useAdb = $Transport -ne 'Wifi'
-if ($useAdb -and -not (Test-Path $adb)) { throw 'adb not found. Run scripts\bootstrap-dev.ps1 or put platform-tools on PATH.' }
+if ($useAdb -and -not (Test-Path $adb)) { throw 'adb not found. Install it (winget install Google.PlatformTools) or run scripts\bootstrap-dev.ps1.' }
 
 $adbArgs = @()
 if ($Serial) { $adbArgs = @('-s', $Serial) }

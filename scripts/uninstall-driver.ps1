@@ -34,7 +34,8 @@ foreach ($line in (pnputil /enum-drivers)) {
 }
 
 if ($RemoveCertificate) {
-    foreach ($store in 'Cert:\LocalMachine\Root', 'Cert:\LocalMachine\TrustedPublisher', 'Cert:\CurrentUser\My') {
+    # New-SelfSignedCertificate also leaves a public copy in CurrentUser\CA.
+    foreach ($store in 'Cert:\LocalMachine\Root', 'Cert:\LocalMachine\TrustedPublisher', 'Cert:\CurrentUser\My', 'Cert:\CurrentUser\CA') {
         Get-ChildItem $store | Where-Object Subject -eq $CertSubject | ForEach-Object {
             Write-Host "Removing certificate $($_.Thumbprint) from $store"
             Remove-Item $_.PSPath

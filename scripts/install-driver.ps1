@@ -59,7 +59,7 @@ function Find-KitTool([string]$Name) {
             Select-Object -First 1
         if ($hit) { return $hit.FullName }
     }
-    throw "$Name not found in the WDK NuGet packages or Windows Kits."
+    return $null
 }
 
 # 1. Certificate
@@ -82,14 +82,24 @@ foreach ($store in 'Root', 'TrustedPublisher') {
 }
 Remove-Item $cer
 
-# 3. Catalog + signature
+# 3. Catalog + signature. A source build regenerates the catalog with the WDK tools; a prebuilt
+#    release has no WDK, so it signs the catalog the release build generated.
 $inf2cat = Find-KitTool 'Inf2Cat.exe'
 $signtool = Find-KitTool 'signtool.exe'
-if (Test-Path $Cat) { Remove-Item $Cat }
-& $inf2cat /driver:$PackageDir /os:10_x64 /uselocaltime | Out-Host
-if ($LASTEXITCODE -ne 0 -or -not (Test-Path $Cat)) { throw 'Inf2Cat failed' }
-& $signtool sign /fd sha256 /sha1 $cert.Thumbprint /s My $Cat | Out-Host
-if ($LASTEXITCODE -ne 0) { throw 'signtool failed' }
+if ($inf2cat) {
+    if (Test-Path $Cat) { Remove-Item $Cat }
+    & $inf2cat /driver:$PackageDir /os:10_x64 /uselocaltime | Out-Host
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $Cat)) { throw 'Inf2Cat failed' }
+} elseif (-not (Test-Path $Cat)) {
+    throw "No catalog at $Cat and no Inf2Cat.exe (WDK) to generate one."
+}
+if ($signtool) {
+    & $signtool sign /fd sha256 /sha1 $cert.Thumbprint /s My $Cat | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw 'signtool failed' }
+} else {
+    $signature = Set-AuthenticodeSignature -FilePath $Cat -Certificate $cert -HashAlgorithm SHA256
+    if ($signature.Status -ne 'Valid') { throw "Signing the catalog failed: $($signature.StatusMessage)" }
+}
 
 # 4. Install into the driver store
 pnputil /add-driver $Inf /install | Out-Host

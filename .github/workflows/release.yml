@@ -1,0 +1,134 @@
+name: release
+
+# Push a version tag to publish a GitHub Release with prebuilt binaries:
+#   git tag v0.2.0 && git push origin v0.2.0
+# A tag with a suffix (v0.2.0-rc1) becomes a pre-release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: microsoft/setup-msbuild@v2
+        with:
+          msbuild-architecture: x64 # the NuGet WDK's InfVerif is 64-bit only
+      - name: Build driver (package + unsigned catalog)
+        run: |
+          msbuild driver\DeuxDisplayIdd.sln /t:restore /p:RestorePackagesConfig=true /nologo /v:m
+          msbuild driver\DeuxDisplayIdd.sln /p:Configuration=Release /p:Platform=x64 /m /nologo /v:m
+      - name: Build host and agent
+        run: msbuild DeuxDisplay.sln /p:Configuration=Release /p:Platform=x64 /m /nologo /v:m
+      - name: Unit tests
+        run: .\host\x64\Release\DeuxDisplayHostTests.exe
+      # Same layout as a source checkout, so the scripts in scripts\ work unchanged.
+      - name: Stage package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $out = 'dist\DeuxDisplay'
+          $files = @(
+            'host\x64\Release\DeuxDisplayHost.exe'
+            'host\x64\Release\DeuxDisplayAgent.exe'
+            'driver\build\x64\Release\DeuxDisplayIdd\DeuxDisplayIdd.dll'
+            'driver\build\x64\Release\DeuxDisplayIdd\DeuxDisplayIdd.inf'
+            'driver\build\x64\Release\DeuxDisplayIdd\deuxdisplayidd.cat'
+            'driver\LICENSE'
+            'driver\THIRD_PARTY_NOTICES.md'
+            'driver\README.md'
+            'scripts\install-driver.ps1'
+            'scripts\uninstall-driver.ps1'
+            'scripts\enable-wireless.ps1'
+            'scripts\install-autostart.ps1'
+            'scripts\run.ps1'
+            'LICENSE'
+            'README.md'
+          )
+          foreach ($f in $files) {
+            $dest = Join-Path $out $f
+            New-Item -ItemType Directory -Force (Split-Path $dest) | Out-Null
+            Copy-Item $f $dest
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/
+          retention-days: 1 # only a hand-off to the publish job
+
+  android:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      # v1.2.3 -> versionName 1.2.3, versionCode 10203 (always increasing across releases).
+      - name: Version from tag
+        run: |
+          name="${GITHUB_REF_NAME#v}"
+          IFS=. read -r major minor patch <<< "${name%%-*}"
+          echo "VERSION_NAME=$name" >> "$GITHUB_ENV"
+          echo "VERSION_CODE=$((major * 10000 + minor * 100 + patch))" >> "$GITHUB_ENV"
+      # With the signing secrets set, build a release APK that installs over earlier releases.
+      # Without them, fall back to a debug APK (each release then needs an uninstall first).
+      - name: Build APK
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          DEUXDISPLAY_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          DEUXDISPLAY_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          DEUXDISPLAY_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          props="-PversionName=$VERSION_NAME -PversionCode=$VERSION_CODE --console=plain"
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            export DEUXDISPLAY_KEYSTORE="$RUNNER_TEMP/release.jks"
+            ./gradlew assembleRelease $props
+            cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/DeuxDisplay.apk"
+          else
+            echo "::warning::ANDROID_KEYSTORE_BASE64 not set; publishing a debug-signed APK"
+            ./gradlew assembleDebug $props
+            cp app/build/outputs/apk/debug/app-debug.apk "$RUNNER_TEMP/DeuxDisplay.apk"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: ${{ runner.temp }}/DeuxDisplay.apk
+          retention-days: 1
+
+  publish:
+    needs: [windows, android]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+      - name: Assemble assets
+        run: |
+          set -e
+          ver="${GITHUB_REF_NAME#v}"
+          cp android/DeuxDisplay.apk windows/DeuxDisplay/DeuxDisplay.apk
+          mv windows/DeuxDisplay "DeuxDisplay-$ver"
+          zip -r -q "DeuxDisplay-$ver-win-x64.zip" "DeuxDisplay-$ver"
+          cp android/DeuxDisplay.apk "DeuxDisplay-$ver.apk"
+          sha256sum "DeuxDisplay-$ver-win-x64.zip" "DeuxDisplay-$ver.apk" > SHA256SUMS.txt
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          flags=""
+          case "$ver" in *-*) flags="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes $flags \
+            --title "DeuxDisplay $ver" \
+            "DeuxDisplay-$ver-win-x64.zip" "DeuxDisplay-$ver.apk" SHA256SUMS.txt
