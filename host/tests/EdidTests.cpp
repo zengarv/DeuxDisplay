@@ -55,6 +55,20 @@ void Manufacturer()
     CHECK(static_cast<char>('A' - 1 + (id & 0x1F)) == 'D');
 }
 
+void ProductCode()
+{
+    // Product 1 keeps the original single-monitor identity (MONITOR\DXD0001); the host finds
+    // further monitors by their product code (little-endian).
+    CHECK(BuildEdid(kPadGo)[10] == 0x01 && BuildEdid(kPadGo)[11] == 0x00);
+    MonitorDescription second = kPadGo;
+    second.product = 2;
+    second.name = "DeuxDisplay 2";
+    const auto e = BuildEdid(second);
+    CHECK(e[10] == 0x02 && e[11] == 0x00);
+    CHECK(std::memcmp(&e[95], "DeuxDisplay 2", 13) == 0);
+    CHECK(e != BuildEdid(kPadGo));
+}
+
 void PhysicalSize()
 {
     const auto e = BuildEdid(kPadGo);
@@ -116,6 +130,7 @@ void RunEdidTests()
     DecodesOwnTimings();
     HeaderAndChecksum();
     Manufacturer();
+    ProductCode();
     PhysicalSize();
     TimingDescriptors();
     NameDescriptor();

@@ -2,8 +2,9 @@
 // Original code, not derived from the Microsoft sample.
 //
 // Interface between DeuxDisplayHost (user mode, no admin) and the DeuxDisplayIdd driver.
-// The host opens the device interface below and plugs/unplugs the virtual monitor with IOCTLs.
-// If the handle that plugged the monitor is closed (including by a crash), the driver unplugs it.
+// The host opens the device interface below and plugs/unplugs a virtual monitor with IOCTLs.
+// Each open handle owns at most one monitor, so one handle per client gives each client its own
+// display. If a handle is closed (including by a crash), the driver unplugs that handle's monitor.
 
 #pragma once
 
@@ -27,7 +28,12 @@ inline constexpr wchar_t kHardwareIds[] = L"DeuxDisplayIdd\0"; // must match Deu
 inline constexpr DWORD kIoctlPlug = CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_ANY_ACCESS);
 inline constexpr DWORD kIoctlUnplug = CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_BUFFERED, FILE_ANY_ACCESS);
 
+// PLUG replaces the caller's monitor, if any; UNPLUG removes only the caller's monitor.
 inline constexpr uint32_t kPlugRequestVersion = 1;
+
+// Monitors the adapter can show at once. Each gets its own connector index and EDID product
+// code, so the host tells them apart by monitor hardware ID (MONITOR\DXD0001, DXD0002, ...).
+inline constexpr uint32_t kMaxMonitors = 4;
 inline constexpr size_t kMaxRefreshRates = 4;
 
 #pragma pack(push, 1)
@@ -39,6 +45,12 @@ struct PlugRequest
     uint16_t widthMm = 0;
     uint16_t heightMm = 0;
     uint16_t refreshHz[kMaxRefreshRates] = {}; // [0] is preferred; 0 = unused
+};
+
+// Optional PLUG output. A driver that predates multiple monitors returns no bytes: index 0.
+struct PlugResult
+{
+    uint32_t index = 0; // connector index, < kMaxMonitors
 };
 #pragma pack(pop)
 

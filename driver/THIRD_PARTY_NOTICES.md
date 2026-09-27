@@ -16,9 +16,9 @@ sample code; they remain MIT.
 
 ## Changes from the sample
 - Renamed to `DeuxDisplayIdd`; new hardware IDs, INF strings and UMDF device group.
-- One monitor, with an EDID generated at compile time (`Edid.h`) from the target device's
-  resolution, refresh rates and physical size instead of hard-coded sample EDIDs.
+- Up to four monitors, one per host handle, each with an EDID generated (`Edid.h`) from the
+  target device's resolution, refresh rates and physical size instead of hard-coded sample EDIDs.
 - Mode lists match the target device.
-- Stable monitor container ID so Windows remembers the display arrangement.
+- Stable monitor container IDs (one per connector) so Windows remembers the display arrangement.
 - WPP tracing removed. Spectre-mitigated libraries not required. WDK consumed via NuGet.
 - Driver files are copied to `DIRID 13` (run from the driver store).

@@ -22,6 +22,7 @@ Licensed under the Microsoft Public License (MS-PL); see driver/LICENSE.
 #include <avrt.h>
 #include <wrl.h>
 
+#include <array>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -94,21 +95,27 @@ class IndirectDeviceContext
     void InitAdapter();
     void OnAdapterReady();
 
-    // Plugs the virtual monitor described by `Request`, replacing any existing one. `Owner` is the
-    // file object of the host's handle; closing it unplugs the monitor.
-    NTSTATUS Plug(const dd::driver::PlugRequest& Request, WDFFILEOBJECT Owner);
-    void Unplug();
+    // Plugs the virtual monitor described by `Request` for `Owner` (the file object of a host
+    // handle), replacing that handle's existing monitor. Other handles' monitors are untouched.
+    // `Index` receives the monitor's connector index. Closing the handle unplugs its monitor.
+    NTSTATUS Plug(const dd::driver::PlugRequest& Request, WDFFILEOBJECT Owner, UINT& Index);
+    void Unplug(WDFFILEOBJECT Owner);
     void OnFileCleanup(WDFFILEOBJECT FileObject);
 
   protected:
-    void UnplugLocked();
+    struct MonitorSlot
+    {
+        IDDCX_MONITOR Monitor = nullptr;
+        WDFFILEOBJECT Owner = nullptr;
+    };
+
+    void UnplugLocked(MonitorSlot& Slot);
 
     WDFDEVICE m_WdfDevice;
     IDDCX_ADAPTER m_Adapter;
     std::mutex m_Lock;
     bool m_AdapterReady = false;
-    IDDCX_MONITOR m_Monitor = nullptr;
-    WDFFILEOBJECT m_Owner = nullptr;
+    std::array<MonitorSlot, dd::driver::kMaxMonitors> m_Slots{}; // index = connector index
 };
 
 class IndirectMonitorContext

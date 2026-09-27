@@ -31,6 +31,7 @@ struct MonitorDescription
     uint16_t heightMm = 0;
     uint32_t serial = 1;
     const char* name = "DeuxDisplay"; // up to 13 chars are used
+    uint16_t product = 1; // Windows names the monitor MONITOR\DXD<product as 4 hex digits>
 };
 
 // Reduced blanking: the link is virtual, so blanking only needs to be plausible.
@@ -109,8 +110,8 @@ constexpr std::array<uint8_t, kEdidSize> BuildEdid(const MonitorDescription& m)
     constexpr uint16_t kVendor = ((('D' - 'A' + 1) << 10) | (('X' - 'A' + 1) << 5) | ('D' - 'A' + 1));
     e[8] = static_cast<uint8_t>(kVendor >> 8);
     e[9] = static_cast<uint8_t>(kVendor & 0xFF);
-    e[10] = 0x01;
-    e[11] = 0x00;
+    e[10] = static_cast<uint8_t>(m.product & 0xFF);
+    e[11] = static_cast<uint8_t>(m.product >> 8);
     for (size_t i = 0; i < 4; ++i)
     {
         e[12 + i] = static_cast<uint8_t>(m.serial >> (8 * i));
