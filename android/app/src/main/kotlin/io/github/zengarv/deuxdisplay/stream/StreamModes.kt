@@ -4,12 +4,37 @@ import android.app.Activity
 import android.media.MediaFormat
 import android.os.Build
 import android.view.Display
+import io.github.zengarv.deuxdisplay.protocol.Protocol
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
+/** Video codec picked by the user. AUTO lets the host choose (it prefers HEVC when both work). */
+enum class StreamCodec { AUTO, H264, HEVC }
+
 /** Stream format picked by the user. 0 in a field means the host decides (the default). */
-data class StreamMode(val width: Int = 0, val height: Int = 0, val refreshHz: Int = 0) {
+data class StreamMode(
+    val width: Int = 0,
+    val height: Int = 0,
+    val refreshHz: Int = 0,
+    val codec: StreamCodec = StreamCodec.AUTO,
+) {
     val hasSize: Boolean get() = width > 0 && height > 0
+
+    /**
+     * HELLO `codecs` bitmask for this pick. The host only encodes what's advertised, so narrowing
+     * the mask is how a codec choice reaches it.
+     *
+     * [hevcDecoder]: a hardware HEVC decoder exists. [hevcRated]: it's also rated for the stream
+     * size. AUTO only offers HEVC within the rating; an explicit HEVC pick is honored beyond it
+     * (decoders' ratings are conservative: the Pad Go's H.264 decoder is "unrated" at its own
+     * native size yet decodes it fine). Without any HEVC decoder a HEVC pick falls back to H.264.
+     */
+    fun codecMask(hevcDecoder: Boolean, hevcRated: Boolean): Int = when (codec) {
+        StreamCodec.H264 -> Protocol.CODEC_MASK_H264
+        StreamCodec.HEVC -> if (hevcDecoder) Protocol.CODEC_MASK_HEVC else Protocol.CODEC_MASK_H264
+        StreamCodec.AUTO ->
+            Protocol.CODEC_MASK_H264 or (if (hevcDecoder && hevcRated) Protocol.CODEC_MASK_HEVC else 0)
+    }
 }
 
 /** A landscape stream size the device can show, with its refresh rates (Hz, highest first). */

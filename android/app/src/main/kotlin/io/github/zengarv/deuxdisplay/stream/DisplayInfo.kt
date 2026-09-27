@@ -5,7 +5,6 @@ import android.media.MediaFormat
 import android.os.Build
 import android.util.DisplayMetrics
 import io.github.zengarv.deuxdisplay.protocol.Hello
-import io.github.zengarv.deuxdisplay.protocol.Protocol
 import kotlin.math.roundToInt
 
 /** Describes this device's panel for the HELLO message (landscape, as the app is locked to it). */
@@ -41,9 +40,9 @@ object DisplayInfo {
             xdpi = ydpi.also { ydpi = xdpi }
         }
 
-        // Only advertise HEVC if its decoder can take the picked size; H.264 was checked when the
-        // size was offered (StreamModes).
-        val hevc = VideoDecoder.hasHardwareDecoder(MediaFormat.MIMETYPE_VIDEO_HEVC) &&
+        // Whether HEVC is rated for the picked size (native if none picked); see StreamMode.codecMask.
+        val hevcDecoder = VideoDecoder.hasHardwareDecoder(MediaFormat.MIMETYPE_VIDEO_HEVC)
+        val hevcRated = hevcDecoder &&
             (!mode.hasSize || VideoDecoder.supportsSize(MediaFormat.MIMETYPE_VIDEO_HEVC, mode.width, mode.height))
 
         return Hello(
@@ -51,7 +50,7 @@ object DisplayInfo {
             heightPx = height,
             densityDpi = metrics.densityDpi,
             refreshMilliHz = (refreshHz * 1000).roundToInt(),
-            codecs = Protocol.CODEC_MASK_H264 or (if (hevc) Protocol.CODEC_MASK_HEVC else 0),
+            codecs = mode.codecMask(hevcDecoder, hevcRated),
             deviceName = "${Build.MANUFACTURER} ${Build.MODEL}",
             xdpiMilli = (xdpi * 1000).roundToInt(),
             ydpiMilli = (ydpi * 1000).roundToInt(),

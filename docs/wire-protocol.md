@@ -66,7 +66,7 @@ Senders must write header and payload with a single write/send call (see latency
 | 2    | `height_px`         | Native panel height in current orientation               |
 | 2    | `density_dpi`       | Android `densityDpi`                                     |
 | 4    | `refresh_mhz`       | Panel refresh rate in millihertz (e.g. 90000)            |
-| 4    | `codecs`            | Bitmask of decodable codecs: bit0 = H.264, bit1 = HEVC   |
+| 4    | `codecs`            | Bitmask of codecs to use: bit0 = H.264, bit1 = HEVC. Clients may advertise a subset of what they can decode to express the user's codec pick; the host prefers HEVC when both are set |
 | str  | `device_name`       | e.g. `OnePlus OPD2305`                                   |
 | 4    | `xdpi_milli`        | *Optional.* Physical horizontal DPI × 1000 (Android `xdpi`) |
 | 4    | `ydpi_milli`        | *Optional.* Physical vertical DPI × 1000 (Android `ydpi`)   |

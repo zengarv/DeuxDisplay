@@ -1,5 +1,6 @@
 ﻿package io.github.zengarv.deuxdisplay.stream
 
+import io.github.zengarv.deuxdisplay.protocol.Protocol
 import io.github.zengarv.deuxdisplay.stream.StreamModes.PanelMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -9,6 +10,23 @@ class StreamModesTest {
 
     // OnePlus Pad Go: one portrait-native panel size at 60 and 90 Hz.
     private val padGo = listOf(PanelMode(1720, 2408, 60f), PanelMode(1720, 2408, 90.00001f))
+
+    @Test
+    fun codecPickNarrowsAdvertisedCodecs() {
+        val h264 = Protocol.CODEC_MASK_H264
+        val hevc = Protocol.CODEC_MASK_HEVC
+        val auto = StreamMode(codec = StreamCodec.AUTO)
+        assertEquals(h264 or hevc, auto.codecMask(hevcDecoder = true, hevcRated = true))
+        assertEquals(h264, auto.codecMask(hevcDecoder = true, hevcRated = false)) // Auto stays within ratings
+        assertEquals(h264, auto.codecMask(hevcDecoder = false, hevcRated = false))
+
+        assertEquals(h264, StreamMode(codec = StreamCodec.H264).codecMask(hevcDecoder = true, hevcRated = true))
+
+        val picked = StreamMode(codec = StreamCodec.HEVC)
+        assertEquals(hevc, picked.codecMask(hevcDecoder = true, hevcRated = true))
+        assertEquals(hevc, picked.codecMask(hevcDecoder = true, hevcRated = false)) // explicit pick is honored
+        assertEquals(h264, picked.codecMask(hevcDecoder = false, hevcRated = false)) // no decoder: fall back
+    }
 
     @Test
     fun nativeSizeIsLandscapeWithAllRates() {

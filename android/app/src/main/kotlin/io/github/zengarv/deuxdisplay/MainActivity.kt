@@ -2,6 +2,7 @@ package io.github.zengarv.deuxdisplay
 
 import android.app.Activity
 import android.graphics.Color
+import android.media.MediaFormat
 import android.text.InputType
 import android.os.Build
 import android.os.Bundle
@@ -29,9 +30,11 @@ import io.github.zengarv.deuxdisplay.stream.DisplayInfo
 import io.github.zengarv.deuxdisplay.stream.ModeOption
 import io.github.zengarv.deuxdisplay.stream.PairingStore
 import io.github.zengarv.deuxdisplay.stream.StreamClient
+import io.github.zengarv.deuxdisplay.stream.StreamCodec
 import io.github.zengarv.deuxdisplay.stream.StreamMode
 import io.github.zengarv.deuxdisplay.stream.StreamModes
 import io.github.zengarv.deuxdisplay.stream.TouchInput
+import io.github.zengarv.deuxdisplay.stream.VideoDecoder
 import io.github.zengarv.deuxdisplay.stream.WifiLink
 
 class MainActivity : Activity(), SurfaceHolder.Callback {
@@ -40,6 +43,9 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
     private lateinit var settings: LinearLayout
     private lateinit var resolutionSpinner: Spinner
     private lateinit var refreshSpinner: Spinner
+    private lateinit var codecSpinner: Spinner
+    private var codecChoices: List<StreamCodec> = emptyList()
+    private val hevcDecoder by lazy { VideoDecoder.hasHardwareDecoder(MediaFormat.MIMETYPE_VIDEO_HEVC) }
     private lateinit var connectionSpinner: Spinner
     private lateinit var pairingLabel: TextView
     private lateinit var codeField: EditText
@@ -236,6 +242,13 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
             }
         }
 
+        codecChoices = listOf(StreamCodec.AUTO, StreamCodec.H264) +
+            if (hevcDecoder) listOf(StreamCodec.HEVC) else emptyList()
+        codecSpinner = Spinner(this).apply {
+            adapter = spinnerAdapter(codecChoices.map { getString(codecLabel(it)) })
+            setSelection(codecChoices.indexOf(mode.codec).coerceAtLeast(0))
+        }
+
         val connectionLabels = listOf(getString(R.string.connection_usb)) +
             if (wifiSupported) listOf(getString(R.string.connection_wifi)) else emptyList()
         connectionSpinner = Spinner(this).apply {
@@ -271,6 +284,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
             setPadding(dp(24), dp(16), dp(24), dp(16))
             addView(settingRow(R.string.setting_resolution, resolutionSpinner))
             addView(settingRow(R.string.setting_refresh, refreshSpinner))
+            addView(settingRow(R.string.setting_codec, codecSpinner))
             addView(settingRow(R.string.setting_connection, connectionSpinner))
             if (wifiSupported) {
                 addView(pairingLabel)
@@ -312,6 +326,12 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
 
     private fun selectedRefreshHz(): Int = refreshChoices.getOrNull(refreshSpinner.selectedItemPosition - 1) ?: 0
 
+    private fun codecLabel(codec: StreamCodec): Int = when (codec) {
+        StreamCodec.AUTO -> R.string.setting_auto
+        StreamCodec.H264 -> R.string.codec_h264
+        StreamCodec.HEVC -> R.string.codec_hevc
+    }
+
     private fun resolutionIndexOf(m: StreamMode): Int =
         modeOptions.indexOfFirst { it.width == m.width && it.height == m.height } + 1 // -1 -> 0 (Auto)
 
@@ -329,7 +349,12 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
         }
 
         val option = modeOptions.getOrNull(resolutionSpinner.selectedItemPosition - 1)
-        val picked = StreamMode(option?.width ?: 0, option?.height ?: 0, selectedRefreshHz())
+        val picked = StreamMode(
+            option?.width ?: 0,
+            option?.height ?: 0,
+            selectedRefreshHz(),
+            codecChoices.getOrElse(codecSpinner.selectedItemPosition) { StreamCodec.AUTO },
+        )
         val pickedWifi = connectionSpinner.selectedItemPosition == 1
         settingsOpened = false
         updateSettingsVisibility()
@@ -359,11 +384,18 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
 
     private fun loadMode(): StreamMode {
         val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
-        var saved = StreamMode(prefs.getInt(KEY_WIDTH, 0), prefs.getInt(KEY_HEIGHT, 0), prefs.getInt(KEY_REFRESH, 0))
+        val codec = StreamCodec.entries.firstOrNull { it.name == prefs.getString(KEY_CODEC, null) } ?: StreamCodec.AUTO
+        var saved = StreamMode(
+            prefs.getInt(KEY_WIDTH, 0),
+            prefs.getInt(KEY_HEIGHT, 0),
+            prefs.getInt(KEY_REFRESH, 0),
+            codec,
+        )
         // Drop anything this device no longer offers (e.g. restored from another device).
         val index = resolutionIndexOf(saved)
         if (index == 0) saved = saved.copy(width = 0, height = 0)
         if (saved.refreshHz !in ratesFor(index)) saved = saved.copy(refreshHz = 0)
+        if (saved.codec == StreamCodec.HEVC && !hevcDecoder) saved = saved.copy(codec = StreamCodec.AUTO)
         return saved
     }
 
@@ -372,6 +404,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
             .putInt(KEY_WIDTH, mode.width)
             .putInt(KEY_HEIGHT, mode.height)
             .putInt(KEY_REFRESH, mode.refreshHz)
+            .putString(KEY_CODEC, mode.codec.name)
             .putBoolean(KEY_WIFI, useWifi)
             .apply()
     }
@@ -385,6 +418,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
         private const val KEY_HEIGHT = "height"
         private const val KEY_REFRESH = "refresh_hz"
         private const val KEY_WIFI = "wifi"
+        private const val KEY_CODEC = "codec"
 
         /** Joining the PC's network needs WifiNetworkSpecifier (Android 10). */
         private val wifiSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
