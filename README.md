@@ -357,6 +357,11 @@ monitor cable:
 
 Plugging in with the app closed does nothing: the tablet just charges.
 
+**App stuck on "waiting for DeuxDisplay on your PC"?** The agent isn't running (no DeuxDisplay
+tray icon), for example after choosing **Exit** in its menu. Start it again by running
+`host\x64\Release\DeuxDisplayAgent.exe` (double-click it, or re-run `install-autostart.ps1`), or
+by signing out and back in.
+
 **From a console** (to try options or watch the log live): exit the agent from the tray first,
 then:
 ```powershell
