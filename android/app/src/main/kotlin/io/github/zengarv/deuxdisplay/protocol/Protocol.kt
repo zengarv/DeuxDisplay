@@ -41,8 +41,10 @@ object MessageType {
     const val PONG: Int = 0x21
     const val FRAME_STATS: Int = 0x22
     const val CURSOR: Int = 0x30
+    const val MEDIA_STATE: Int = 0x31
     const val INPUT: Int = 0x40
     const val ORIENTATION: Int = 0x41
+    const val ACTION: Int = 0x42
 }
 
 enum class Codec(val wire: Int) {
@@ -236,6 +238,44 @@ fun parseTouchFrame(payload: ByteArray): List<TouchContact> = parsing(payload) {
         val action = get().toInt() and 0xFF
         if (id >= Protocol.MAX_TOUCH_CONTACTS || action > TouchAction.CANCEL) throw ProtocolException("bad contact")
         TouchContact(id, action, u16(), u16(), u16())
+    }
+}
+
+/** ACTION values: shortcuts from the dock and the volume keys. The host picks the keys. */
+object DockAction {
+    const val CUT: Int = 1
+    const val COPY: Int = 2
+    const val PASTE: Int = 3
+    const val UNDO: Int = 4
+    const val REDO: Int = 5
+    const val TASK_VIEW: Int = 6
+    const val PLAY_PAUSE: Int = 7
+    const val VOLUME_UP: Int = 8
+    const val VOLUME_DOWN: Int = 9
+}
+
+fun serializeAction(action: Int): ByteArray = byteArrayOf(action.toByte())
+
+object Playback {
+    const val NONE: Int = 0
+    const val PAUSED: Int = 1
+    const val PLAYING: Int = 2
+}
+
+/** MEDIA_STATE: the Windows volume (0..100) and what the play/pause key controls. */
+data class MediaState(val playback: Int, val muted: Boolean, val volumePercent: Int) {
+    fun serialize(): ByteArray =
+        byteArrayOf(playback.toByte(), (if (muted) 1 else 0).toByte(), volumePercent.toByte(), 0)
+
+    companion object {
+        fun parse(payload: ByteArray): MediaState = parsing(payload) {
+            val playback = get().toInt() and 0xFF
+            val flags = get().toInt() and 0xFF
+            val volume = get().toInt() and 0xFF
+            get() // reserved
+            if (playback > Playback.PLAYING || volume > 100) throw ProtocolException("bad media state")
+            MediaState(playback, flags and 1 != 0, volume)
+        }
     }
 }
 

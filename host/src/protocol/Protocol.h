@@ -32,8 +32,10 @@ enum class MessageType : uint8_t
     Pong = 0x21,
     FrameStats = 0x22,
     Cursor = 0x30,
+    MediaState = 0x31,
     Input = 0x40,
     Orientation = 0x41,
+    Action = 0x42,
 };
 
 namespace video_flags
@@ -134,6 +136,45 @@ struct TouchFrame
 {
     std::vector<TouchContact> contacts;
 };
+
+// ACTION payload: a shortcut from the client's dock. The host picks the keys, so clients don't
+// depend on Windows key codes.
+enum class Action : uint8_t
+{
+    Cut = 1,
+    Copy = 2,
+    Paste = 3,
+    Undo = 4,
+    Redo = 5,
+    TaskView = 6,
+    PlayPause = 7,
+    VolumeUp = 8,
+    VolumeDown = 9,
+};
+
+std::vector<uint8_t> SerializeAction(Action action);
+// nullopt for an empty payload or an action this host doesn't know.
+std::optional<Action> ParseAction(std::span<const uint8_t> payload);
+
+enum class Playback : uint8_t
+{
+    None = 0, // no media session
+    Paused = 1,
+    Playing = 2,
+};
+
+// MEDIA_STATE payload: what the dock shows. Sent after CONFIG and whenever it changes.
+struct MediaState
+{
+    Playback playback = Playback::None;
+    bool muted = false;
+    uint8_t volumePercent = 0; // 0..100
+
+    bool operator==(const MediaState&) const = default;
+};
+
+std::vector<uint8_t> SerializeMediaState(const MediaState& msg);
+std::optional<MediaState> ParseMediaState(std::span<const uint8_t> payload);
 
 inline constexpr size_t kNonceSize = 16;
 inline constexpr size_t kMacSize = 32;

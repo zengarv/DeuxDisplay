@@ -117,6 +117,23 @@ void OrientationRoundTrip()
     CHECK(!ParseOrientation({}).has_value());
 }
 
+void ActionAndMediaStateRoundTrip()
+{
+    CHECK(ParseAction(SerializeAction(Action::Cut)) == Action::Cut);
+    CHECK(ParseAction(SerializeAction(Action::VolumeDown)) == Action::VolumeDown);
+    const std::array<uint8_t, 1> unknown{0x7F};
+    CHECK(!ParseAction(unknown).has_value());
+    CHECK(!ParseAction({}).has_value());
+
+    const MediaState state{Playback::Playing, true, 45};
+    const auto bytes = SerializeMediaState(state);
+    CHECK(bytes.size() == 4 && bytes[0] == 2 && bytes[1] == 1 && bytes[2] == 45 && bytes[3] == 0);
+    CHECK(ParseMediaState(bytes) == state);
+    const std::array<uint8_t, 4> loud{1, 0, 101, 0};
+    CHECK(!ParseMediaState(loud).has_value());
+    CHECK(!ParseMediaState(std::span(bytes).first(3)).has_value());
+}
+
 void PingPongStatsRoundTrip()
 {
     CHECK(ParsePing(SerializePing(42)) == 42u);
@@ -245,6 +262,7 @@ void RunProtocolTests()
     HelloRoundTrip();
     ConfigRoundTrip();
     OrientationRoundTrip();
+    ActionAndMediaStateRoundTrip();
     PingPongStatsRoundTrip();
     TouchFrameRoundTrip();
     AuthMessagesRoundTrip();

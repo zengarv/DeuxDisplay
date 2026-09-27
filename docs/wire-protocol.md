@@ -54,8 +54,10 @@ Senders must write header and payload with a single write/send call (see latency
 | `0x21` | `PONG`            | either           | Reply to `PING`                                |
 | `0x22` | `FRAME_STATS`     | client → host    | Per-frame receive/decode/render timestamps     |
 | `0x30` | `CURSOR`          | host → client    | Reserved (cursor overlay, post-v1)             |
+| `0x31` | `MEDIA_STATE`     | host → client    | Windows volume and play/pause state            |
 | `0x40` | `INPUT`           | client → host    | Touch input on the stream                      |
 | `0x41` | `ORIENTATION`     | client → host    | Desktop orientation the client wants           |
+| `0x42` | `ACTION`          | client → host    | A shortcut from the client's dock              |
 
 ### `HELLO` (client → host)
 
@@ -199,6 +201,43 @@ stretched over its whole surface, so they don't depend on the stream size. The h
 per-contact state: a contact that is active on the host but missing from a frame is lifted, and
 all contacts are lifted when the session ends, so a dropped message can't leave a finger stuck.
 
+### `ACTION` (client → host)
+
+A button on the client's shortcut dock, or a volume key. The client names the action; the host
+decides how to carry it out, so clients don't depend on Windows key codes.
+
+| Size | Field    | Notes                               |
+|-----:|----------|-------------------------------------|
+| 1    | `action` | See below. Hosts ignore unknown values |
+
+| Value | Action       | Host does                                         |
+|------:|--------------|---------------------------------------------------|
+| 1     | Cut          | Ctrl+X                                            |
+| 2     | Copy         | Ctrl+C                                            |
+| 3     | Paste        | Ctrl+V                                            |
+| 4     | Undo         | Ctrl+Z                                            |
+| 5     | Redo         | Ctrl+Y                                            |
+| 6     | Task view    | Win+Tab                                           |
+| 7     | Play/pause   | Media play/pause key                              |
+| 8     | Volume up    | Windows volume one step (5 %) up, unmuting        |
+| 9     | Volume down  | Windows volume one step down; reaching 0 mutes    |
+
+Keys go to the active window, as from a keyboard. Volume changes the default playback device
+directly (no key press, so Windows shows no volume flyout).
+
+### `MEDIA_STATE` (host → client)
+
+| Size | Field      | Notes                                                      |
+|-----:|------------|------------------------------------------------------------|
+| 1    | `playback` | `0` no media session, `1` paused/stopped, `2` playing      |
+| 1    | `flags`    | bit0 = muted                                               |
+| 1    | `volume`   | Windows volume, 0–100                                      |
+| 1    | `reserved` | 0                                                          |
+
+`playback` is the media session the play/pause key controls. The host sends `MEDIA_STATE` right
+after `CONFIG` and then whenever it changes. A host sends it only if it accepts `ACTION`, so
+clients show their dock (and take over the volume keys) only after receiving one.
+
 ## Pairing and authentication
 
 ### Pairing code
@@ -262,7 +301,9 @@ client                              host
   | <--- VIDEO_FRAME (KEYFRAME) ----  |
   | <--- VIDEO_FRAME ... -----------  |
   | ---- PING / FRAME_STATS ------->  |
+  | <--- MEDIA_STATE ---------------  |   (if the host takes ACTION)
   | ---- INPUT (touch) ------------>  |
+  | ---- ACTION ------------------->  |
   | ---- BYE ---------------------->  |
 ```
 

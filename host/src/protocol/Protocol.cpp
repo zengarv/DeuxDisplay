@@ -233,6 +233,50 @@ std::optional<uint16_t> ParseOrientation(std::span<const uint8_t> payload)
     return degrees;
 }
 
+std::vector<uint8_t> SerializeAction(Action action)
+{
+    Writer w(1);
+    w.Put(static_cast<uint8_t>(action));
+    return w.Take();
+}
+
+std::optional<Action> ParseAction(std::span<const uint8_t> payload)
+{
+    Reader r(payload);
+    uint8_t action = 0;
+    if (!r.Get(action) || action < static_cast<uint8_t>(Action::Cut) ||
+        action > static_cast<uint8_t>(Action::VolumeDown))
+    {
+        return std::nullopt;
+    }
+    return static_cast<Action>(action);
+}
+
+std::vector<uint8_t> SerializeMediaState(const MediaState& msg)
+{
+    Writer w(4);
+    w.Put(static_cast<uint8_t>(msg.playback));
+    w.Put(static_cast<uint8_t>(msg.muted ? 1 : 0));
+    w.Put(msg.volumePercent);
+    w.Put(uint8_t{0});
+    return w.Take();
+}
+
+std::optional<MediaState> ParseMediaState(std::span<const uint8_t> payload)
+{
+    Reader r(payload);
+    uint8_t playback = 0;
+    uint8_t flags = 0;
+    uint8_t volume = 0;
+    uint8_t reserved = 0;
+    if (!r.Get(playback) || !r.Get(flags) || !r.Get(volume) || !r.Get(reserved) ||
+        playback > static_cast<uint8_t>(Playback::Playing) || volume > 100)
+    {
+        return std::nullopt;
+    }
+    return MediaState{static_cast<Playback>(playback), (flags & 1) != 0, volume};
+}
+
 std::vector<uint8_t> SerializePing(uint64_t pingId)
 {
     Writer w(8);

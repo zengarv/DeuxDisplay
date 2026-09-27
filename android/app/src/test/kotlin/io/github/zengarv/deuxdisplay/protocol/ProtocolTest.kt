@@ -125,4 +125,23 @@ class ProtocolTest {
         bytes[4] = 10
         parseTouchFrame(bytes)
     }
+
+    @Test
+    fun mediaStateMatchesHostLayout() {
+        // Same bytes as host/tests/ProtocolTests.cpp.
+        val state = MediaState(Playback.PLAYING, muted = true, volumePercent = 45)
+        assertArrayEquals(byteArrayOf(2, 1, 45, 0), state.serialize())
+        assertEquals(state, MediaState.parse(state.serialize()))
+        assertArrayEquals(byteArrayOf(DockAction.COPY.toByte()), serializeAction(DockAction.COPY))
+    }
+
+    @Test(expected = ProtocolException::class)
+    fun mediaStateRejectsVolumeOver100() {
+        MediaState.parse(byteArrayOf(1, 0, 101, 0))
+    }
+
+    @Test(expected = ProtocolException::class)
+    fun mediaStateRejectsTruncated() {
+        MediaState.parse(byteArrayOf(1, 0, 50))
+    }
 }
