@@ -7,8 +7,9 @@
 namespace dd
 {
 
-// One-time setup (administrator): creates/removes the persistent software device that makes
-// Windows load DeuxDisplayIdd. Called by scripts/install-driver.ps1 and uninstall-driver.ps1.
+// One-time setup (administrator): creates/removes the root-enumerated device that makes Windows
+// load DeuxDisplayIdd. Windows keeps it across reboots, like detected hardware. Idempotent.
+// Called by scripts/install-driver.ps1 and uninstall-driver.ps1.
 HRESULT InstallDevice();
 HRESULT RemoveDevice();
 

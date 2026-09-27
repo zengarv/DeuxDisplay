@@ -12,8 +12,8 @@
     2. Trusts it in LocalMachine\Root and LocalMachine\TrustedPublisher.
     3. Generates and signs the package catalog.
     4. Installs the package into the driver store with pnputil.
-    5. Creates the persistent DeuxDisplay device (`DeuxDisplayHost --install-device`), which
-       needs the host to be built first.
+    5. Creates the DeuxDisplay device (`DeuxDisplayHost --install-device`), a root-enumerated
+       device that Windows restores at every boot. Needs the host to be built first.
     6. Allows the host through Windows Firewall for Wi-Fi sessions (enable-wireless.ps1).
 
   After this, no admin rights are needed: DeuxDisplayHost (as a normal user) plugs the virtual
@@ -105,7 +105,7 @@ if ($signtool) {
 pnputil /add-driver $Inf /install | Out-Host
 if ($LASTEXITCODE -notin 0, 259, 3010) { throw "pnputil failed ($LASTEXITCODE)" }
 
-# 5. Persistent device (no monitor is plugged until the host asks for one)
+# 5. Root-enumerated device, kept across reboots (no monitor is plugged until the host asks)
 & $Host_ --install-device | Out-Host
 if ($LASTEXITCODE -ne 0) { throw 'DeuxDisplayHost --install-device failed' }
 # 6. Firewall rule for Wi-Fi sessions

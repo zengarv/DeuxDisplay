@@ -20,10 +20,12 @@ namespace dd::driver
 inline constexpr GUID kDeviceInterfaceGuid = {
     0x9d4c6a2e, 0x3b1f, 0x4e7a, {0x8c, 0x5d, 0x6f, 0x2a, 0x1b, 0x3c, 0x4d, 0x5e}};
 
-// Software device created (persistently) by `DeuxDisplayHost --install-device`.
-inline constexpr wchar_t kSoftwareDeviceEnumerator[] = L"DeuxDisplayIdd";
-inline constexpr wchar_t kSoftwareDeviceInstanceId[] = L"DeuxDisplayIdd";
-inline constexpr wchar_t kHardwareIds[] = L"DeuxDisplayIdd\0"; // must match DeuxDisplayIdd.inf
+// Hardware IDs, both listed in DeuxDisplayIdd.inf. `DeuxDisplayHost --install-device` creates a
+// root-enumerated device (ROOT\DEUXDISPLAYIDD\nnnn), which Windows restores at every boot. Older
+// hosts created a software device (SWD\DeuxDisplayIdd\DeuxDisplayIdd) instead, which didn't
+// survive a reboot; --install-device removes it.
+inline constexpr wchar_t kRootHardwareIds[] = L"Root\\DeuxDisplayIdd\0";
+inline constexpr wchar_t kSoftwareHardwareId[] = L"DeuxDisplayIdd";
 
 inline constexpr DWORD kIoctlPlug = CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_ANY_ACCESS);
 inline constexpr DWORD kIoctlUnplug = CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_BUFFERED, FILE_ANY_ACCESS);

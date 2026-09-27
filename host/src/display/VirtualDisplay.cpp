@@ -1,8 +1,11 @@
 #include "VirtualDisplay.h"
 
 #include <cfgmgr32.h>
-#include <swdevice.h>
+#include <devguid.h>
+#include <newdev.h>
+#include <setupapi.h>
 
+#include <string>
 #include <vector>
 
 #include "../capture/OutputLocator.h"
@@ -13,48 +16,105 @@ namespace dd
 namespace
 {
 
-struct CreationResult
+bool EqualsIgnoreCase(const wchar_t* a, const wchar_t* b)
 {
-    HANDLE event;
-    HRESULT hr;
-};
-
-VOID WINAPI OnCreated(HSWDEVICE, HRESULT hr, PVOID context, PCWSTR)
-{
-    auto* result = static_cast<CreationResult*>(context);
-    result->hr = hr;
-    SetEvent(result->event);
+    return CompareStringOrdinal(a, -1, b, -1, TRUE) == CSTR_EQUAL;
 }
 
-// Creates the software device, or opens it if it already exists (persistent lifetime).
-HRESULT OpenSoftwareDevice(HSWDEVICE& device)
+// Whether a display-class device carries one of our hardware IDs (either kind of device).
+bool IsOurDevice(HDEVINFO set, SP_DEVINFO_DATA& data)
 {
-    SW_DEVICE_CREATE_INFO info{};
-    info.cbSize = sizeof(info);
-    info.pszInstanceId = driver::kSoftwareDeviceInstanceId;
-    info.pszzHardwareIds = driver::kHardwareIds;
-    info.pszzCompatibleIds = driver::kHardwareIds;
-    info.pszDeviceDescription = L"DeuxDisplay Virtual Monitor";
-    info.CapabilityFlags = SWDeviceCapabilitiesSilentInstall | SWDeviceCapabilitiesDriverRequired;
+    wchar_t ids[512]{}; // REG_MULTI_SZ; the size limit keeps the final double NUL in place
+    if (!SetupDiGetDeviceRegistryPropertyW(set, &data, SPDRP_HARDWAREID, nullptr, reinterpret_cast<BYTE*>(ids),
+                                           sizeof(ids) - 2 * sizeof(wchar_t), nullptr))
+    {
+        return false;
+    }
+    for (const wchar_t* id = ids; *id; id += wcslen(id) + 1)
+    {
+        if (EqualsIgnoreCase(id, driver::kRootHardwareIds) || EqualsIgnoreCase(id, driver::kSoftwareHardwareId))
+        {
+            return true;
+        }
+    }
+    return false;
+}
 
-    CreationResult result{CreateEventW(nullptr, TRUE, FALSE, nullptr), E_PENDING};
-    if (!result.event)
+// Removes our devices, present or not (a software device left over from a reboot is only a
+// registry entry). With `keepRoot`, root-enumerated ones stay and are reported in `haveRoot`.
+HRESULT RemoveDevices(bool keepRoot, bool& haveRoot)
+{
+    haveRoot = false;
+    HDEVINFO set = SetupDiGetClassDevsW(&GUID_DEVCLASS_DISPLAY, nullptr, nullptr, 0); // 0: not only present ones
+    if (set == INVALID_HANDLE_VALUE)
     {
         return HRESULT_FROM_WIN32(GetLastError());
     }
-    HRESULT hr = SwDeviceCreate(driver::kSoftwareDeviceEnumerator, L"HTREE\\ROOT\\0", &info, 0, nullptr, OnCreated,
-                                &result, &device);
-    if (SUCCEEDED(hr))
+    // Collect first: removing while enumerating would shift the indices.
+    std::vector<std::wstring> doomed;
+    SP_DEVINFO_DATA data{sizeof(data)};
+    for (DWORD i = 0; SetupDiEnumDeviceInfo(set, i, &data); ++i)
     {
-        hr = WaitForSingleObject(result.event, 15000) == WAIT_OBJECT_0 ? result.hr : HRESULT_FROM_WIN32(ERROR_TIMEOUT);
+        wchar_t instanceId[MAX_DEVICE_ID_LEN]{};
+        if (!IsOurDevice(set, data) ||
+            !SetupDiGetDeviceInstanceIdW(set, &data, instanceId, MAX_DEVICE_ID_LEN, nullptr))
+        {
+            continue;
+        }
+        if (keepRoot && _wcsnicmp(instanceId, L"ROOT\\", 5) == 0)
+        {
+            haveRoot = true;
+            continue;
+        }
+        doomed.emplace_back(instanceId);
     }
-    // Close the device before the event: the creation callback must not fire into freed state.
-    if (FAILED(hr) && device)
+    HRESULT hr = S_OK;
+    for (const auto& instanceId : doomed)
     {
-        SwDeviceClose(device);
-        device = nullptr;
+        SP_DEVINFO_DATA device{sizeof(device)};
+        if (!SetupDiOpenDeviceInfoW(set, instanceId.c_str(), nullptr, 0, &device) ||
+            !SetupDiCallClassInstaller(DIF_REMOVE, set, &device))
+        {
+            hr = HRESULT_FROM_WIN32(GetLastError());
+            Log(L"display: removing %s failed 0x%08lX", instanceId.c_str(), Hr(hr));
+            continue;
+        }
+        Log(L"display: removed %s", instanceId.c_str());
     }
-    CloseHandle(result.event);
+    SetupDiDestroyDeviceInfoList(set);
+    return hr;
+}
+
+// Creates ROOT\DEUXDISPLAYIDD\nnnn and installs the driver package already in the driver store.
+HRESULT CreateRootDevice()
+{
+    HDEVINFO set = SetupDiCreateDeviceInfoList(&GUID_DEVCLASS_DISPLAY, nullptr);
+    if (set == INVALID_HANDLE_VALUE)
+    {
+        return HRESULT_FROM_WIN32(GetLastError());
+    }
+    SP_DEVINFO_DATA data{sizeof(data)};
+    HRESULT hr = S_OK;
+    if (!SetupDiCreateDeviceInfoW(set, L"DeuxDisplayIdd", &GUID_DEVCLASS_DISPLAY, L"DeuxDisplay Virtual Monitor",
+                                  nullptr, DICD_GENERATE_ID, &data) ||
+        !SetupDiSetDeviceRegistryPropertyW(set, &data, SPDRP_HARDWAREID,
+                                           reinterpret_cast<const BYTE*>(driver::kRootHardwareIds),
+                                           sizeof(driver::kRootHardwareIds)) ||
+        !SetupDiCallClassInstaller(DIF_REGISTERDEVICE, set, &data))
+    {
+        hr = HRESULT_FROM_WIN32(GetLastError());
+    }
+    else
+    {
+        // No driver given: the best match from the driver store (pnputil /add-driver put it there).
+        BOOL reboot = FALSE;
+        if (!DiInstallDevice(nullptr, set, &data, nullptr, 0, &reboot))
+        {
+            hr = HRESULT_FROM_WIN32(GetLastError());
+            SetupDiCallClassInstaller(DIF_REMOVE, set, &data); // no half-installed device left behind
+        }
+    }
+    SetupDiDestroyDeviceInfoList(set);
     return hr;
 }
 
@@ -62,30 +122,20 @@ HRESULT OpenSoftwareDevice(HSWDEVICE& device)
 
 HRESULT InstallDevice()
 {
-    HSWDEVICE device = nullptr;
-    HRESULT hr = OpenSoftwareDevice(device);
-    if (FAILED(hr))
+    // Drops the software device earlier versions created: it didn't come back after a reboot.
+    bool haveRoot = false;
+    HRESULT hr = RemoveDevices(true, haveRoot);
+    if (FAILED(hr) || haveRoot)
     {
-        return hr;
+        return hr; // already installed; Windows restores the root device at every boot
     }
-    // Keep the device after this process exits (and across reboots) until RemoveDevice().
-    hr = SwDeviceSetLifetime(device, SWDeviceLifetimeParentPresent);
-    SwDeviceClose(device);
-    return hr;
+    return CreateRootDevice();
 }
 
 HRESULT RemoveDevice()
 {
-    HSWDEVICE device = nullptr;
-    HRESULT hr = OpenSoftwareDevice(device);
-    if (FAILED(hr))
-    {
-        return hr;
-    }
-    // Back to handle lifetime: closing the handle removes the device.
-    hr = SwDeviceSetLifetime(device, SWDeviceLifetimeHandle);
-    SwDeviceClose(device);
-    return hr;
+    bool haveRoot = false;
+    return RemoveDevices(false, haveRoot);
 }
 
 VirtualDisplay::~VirtualDisplay()

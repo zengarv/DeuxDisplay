@@ -31,8 +31,10 @@ Windows composes the extended desktop onto it like any real monitor. The driver'
 processor simply drains frames; the host captures them through Desktop Duplication.
 
 **Lifecycle, and no admin at runtime.** Installing (`scripts/install-driver.ps1`, admin, once)
-adds the driver package and creates a *persistent* software device, so the display adapter
-always exists but with no monitor attached. At runtime the host (a normal user) opens the
+adds the driver package and creates a root-enumerated device (`ROOT\DEUXDISPLAYIDD\0000`).
+Windows keeps that device and restores it at every boot, like detected hardware, so the display
+adapter always exists but with no monitor attached. (Early versions used a software device, which
+Windows didn't restore after a reboot; `--install-device` replaces it.) At runtime the host (a normal user) opens the
 driver's device interface (`driver/DeuxDisplayIdd/Public.h`) and sends:
 
 - `PLUG` with the client's resolution, refresh rates and physical size (from `HELLO`). The driver

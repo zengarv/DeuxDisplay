@@ -6,8 +6,11 @@ client device. It is a **user-mode (UMDF 2)** driver derived from Microsoft's Id
 except `Edid.h` which is MIT.
 
 ## How it's used
-- **Install (admin, once):** the driver package plus a persistent software device
-  (`SWD\DeuxDisplayIdd\DeuxDisplayIdd`). The adapter exists, but no monitor is attached.
+- **Install (admin, once):** the driver package plus a root-enumerated device
+  (`ROOT\DEUXDISPLAYIDD\0000`, hardware ID `Root\DeuxDisplayIdd`), which Windows restores at
+  every boot. The adapter exists, but no monitor is attached. Upgrading from a version that used
+  a software device (`SWD\DeuxDisplayIdd\DeuxDisplayIdd`, gone after a reboot): run
+  `DeuxDisplayHost --install-device` once from an elevated prompt, or `install-driver.ps1` again.
 - **Runtime (no admin):** `DeuxDisplayHost` opens the device interface declared in
   [`Public.h`](DeuxDisplayIdd/Public.h) and sends `PLUG` with the client's width, height, refresh
   rates and physical size. The driver builds an EDID (`Edid.h`, vendor `DXD`, product `0001`,
