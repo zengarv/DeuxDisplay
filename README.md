@@ -239,93 +239,163 @@ More detail in [docs/architecture.md](docs/architecture.md) and the protocol spe
 | `scripts/`           | Dev bootstrap, driver install, Wi-Fi firewall rule, run helpers |
 | `.github/workflows/` | CI                                                              |
 
-## Building from source
+## Getting started
 
-### Prerequisites
-- Windows 11 x64
-- Visual Studio 2022 or Build Tools 2022 with **Desktop development with C++**
-  (MSVC v143, Windows 11 SDK). The WDK is pulled from NuGet automatically for the driver build.
-- An Android device with **USB debugging** enabled
+The whole flow, once: **get the code → set up → build → install → run over USB and/or Wi-Fi.**
+Everything after step 4 runs without admin rights.
 
-The Java/Android toolchain installs per-user with one script (no admin rights needed):
+| Mode  | Needs                                                   | Typical latency\* | How it starts                  |
+|-------|---------------------------------------------------------|-------------------|--------------------------------|
+| USB   | USB cable, USB debugging on                             | ~23 ms to tablet  | Plug in (background agent) or `run.ps1` |
+| Wi-Fi | Paired once over USB, Android 10+, PC Wi-Fi with Wi-Fi Direct | ~55–60 ms to tablet | `run.ps1 -Transport Both`, then pick Wi-Fi in the app |
+
+\* Capture to "received on the tablet", p50, reference hardware. Decoding and display add more;
+see [docs/latency-notes.md](docs/latency-notes.md).
+
+### 1. Get the code
+
+There are no prebuilt releases yet. Clone the repository (or use **Code > Download ZIP** on
+GitHub and extract it):
 
 ```powershell
-.\scripts\bootstrap-dev.ps1            # add -PersistEnv to set JAVA_HOME/ANDROID_HOME/PATH for new shells
+git clone https://github.com/zengarv/DeuxDisplay.git
+cd DeuxDisplay
 ```
 
-### Host
-From a *Developer PowerShell for VS 2022*:
+Every push is built by CI. The **Actions** tab has artifacts from the latest run (the app's
+`app-debug` APK, `DeuxDisplayHost`, and an unsigned driver package), which is handy for grabbing
+just the APK. The driver still has to be built and signed on your PC (step 4), so build from
+source for a working setup.
+
+### 2. One-time setup
+
+**PC** (Windows 11 x64):
+- Visual Studio 2022 or **Build Tools 2022** (17.14+) with **Desktop development with C++**
+  (MSVC v143, Windows 11 SDK), plus the **Windows Driver Kit** component
+  (`Component.Microsoft.Windows.DriverKit.BuildTools` for Build Tools). The WDK itself comes from
+  NuGet during the build.
+- The Java/Android toolchain (JDK 17, Android SDK, adb), installed per user with one script:
+  ```powershell
+  .\scripts\bootstrap-dev.ps1        # add -PersistEnv to set JAVA_HOME/ANDROID_HOME/PATH for new shells
+  ```
+
+**Tablet** (Android 8+; Wi-Fi mode needs Android 10+):
+1. Settings > About tablet > tap **Build number** 7 times to unlock Developer options.
+2. Developer options > turn on **USB debugging**.
+3. Plug it into the PC and accept **Allow USB debugging** (tick *Always allow from this computer*).
+
+### 3. Build
+
+From a *Developer PowerShell for VS 2022*. Use the 64-bit MSBuild; the dev shell's default is fine.
+
 ```powershell
+# Host (DeuxDisplayHost.exe, the tray agent, and tests)
 msbuild DeuxDisplay.sln /p:Configuration=Release /p:Platform=x64 /m
-.\host\x64\Release\DeuxDisplayHost.exe --list-outputs
-```
+.\host\x64\Release\DeuxDisplayHostTests.exe
 
-### Driver
-Also needs the VS **Windows Driver Kit** component (VS 17.14+). See
-[driver/README.md](driver/README.md).
-```powershell
+# Driver (restores the WDK from NuGet first)
 msbuild driver\DeuxDisplayIdd.sln /t:restore /p:RestorePackagesConfig=true
 msbuild driver\DeuxDisplayIdd.sln /p:Configuration=Release /p:Platform=x64
-.\scripts\install-driver.ps1                               # elevated, once; no test-signing mode needed
-.\host\x64\Release\DeuxDisplayHost.exe --create-display    # normal user: virtual monitor appears
-```
-`install-driver.ps1` trusts a locally generated signing certificate on your machine. Read
-[driver/README.md](driver/README.md) first. After installation nothing needs admin rights.
 
-### Try the stream without a tablet
+# Android app
+cd android; .\gradlew.bat assembleDebug; cd ..
+```
+
+### 4. Install
+
 ```powershell
-.\host\x64\Release\DeuxDisplayHost.exe --serve             # USB (127.0.0.1:27183) + Wi-Fi
-.\host\x64\Release\DeuxDisplayHost.exe --pair              # Wi-Fi pairing code
-python tools\dump_receiver.py --seconds 10                 # acts as the tablet; writes out.h264
-ffplay out.h264
+# Elevated PowerShell, once: signs and installs the driver, creates the virtual display device,
+# and adds the firewall rule Wi-Fi needs. No test-signing mode required.
+.\scripts\install-driver.ps1
+
+# Normal PowerShell: install the app on the tablet (plugged in over USB)
+.\scripts\run.ps1 -Install          # installs, launches, and starts streaming over USB; Ctrl+C stops
 ```
 
-### Android app
-```powershell
-cd android
-.\gradlew.bat assembleDebug
-```
+`install-driver.ps1` trusts a locally generated signing certificate on your PC; read
+[driver/README.md](driver/README.md) first. To check the driver alone:
+`.\host\x64\Release\DeuxDisplayHost.exe --create-display` makes a monitor appear.
 
-### Run it: plug and play (USB)
-Once, with the driver installed and the app on the tablet (`.\scripts\run.ps1 -Install` installs it):
+### 5. Run over USB
+
+**Plug and play (recommended).** Set this up once:
 ```powershell
 .\scripts\install-autostart.ps1    # per user, no admin; -Remove undoes it
 ```
-This starts **DeuxDisplayAgent** now and at every login: a tray icon that keeps the host running
+It starts **DeuxDisplayAgent** now and at every login: a tray icon that keeps the host running
 in the background (log: `%LOCALAPPDATA%\DeuxDisplay\host.log`). From then on it behaves like a
 monitor cable:
 
 1. Open DeuxDisplay on the tablet.
-2. Plug in the USB cable. The tablet appears as a monitor to the right of your main display
-   within about a second.
+2. Plug in the USB cable. The tablet appears as a monitor next to your main display within about
+   a second.
 3. Unplug it, close the app or let the tablet sleep, and the monitor goes away.
 
 Plugging in with the app closed does nothing: the tablet just charges.
 
-- **USB debugging must be on** (Settings > About tablet > tap *Build number* 7 times, then
-  Developer options > USB debugging). The stream travels over adb. The first time, accept
-  *Allow USB debugging* on the tablet and tick *Always allow from this computer*.
+**From a console** (to try options or watch the log live): exit the agent from the tray first,
+then:
+```powershell
+.\scripts\run.ps1 -Transport Usb    # Ctrl+C to stop
+```
+
 - **Any USB mode works:** *Charging only* (Android's default), *File transfer* and so on. adb runs
   alongside all of them. Switching modes briefly drops the display, and it comes back by itself.
 - The host re-creates the adb tunnel whenever the tablet (re)appears: cable re-plugged, USB mode
   switched, or the adb server restarted by another tool. No need to run `adb reverse` yourself.
+- Only one adb version should run on the PC. Tools that bundle their own `adb.exe` (some
+  phone-mirroring apps) keep restarting the adb server and drop the tunnel.
 
-To try options or watch the log live, exit the agent from the tray and use the console runner
-instead: `.\scripts\run.ps1` (`-Codec hevc`, `-MaxFps 60`, ...). Options can also be set for
-the agent: `.\scripts\install-autostart.ps1 -HostArgs '--codec hevc'`.
+### 6. Run over Wi-Fi
 
-**Wireless** (not started in the background): after one USB session, which pairs the tablet,
-exit the agent from the tray. Then press **Back** on the tablet, set **Connection** to *Wi-Fi
-(direct to PC)* and **Apply**. Approve Android's "connect to DeuxDisplay-xxxx" prompt the first
-time. From then on the cable is optional:
+The PC runs its own small Wi-Fi network (`DeuxDisplay-xxxx`), and the tablet joins it directly;
+no router is involved. The background agent serves **USB only**, so Wi-Fi runs from a console.
+
+1. **Pair once over USB.** Connect over USB with the app open (step 5). The USB session hands the
+   tablet the pairing code automatically; the app's settings then show *Wi-Fi: paired with
+   &lt;your PC&gt;*. Without a cable: run `.\host\x64\Release\DeuxDisplayHost.exe --pair` to show the
+   code and type it into the app's pairing field.
+2. **Exit the agent** from the tray icon, if it's running.
+3. **Start the host with Wi-Fi:**
+   ```powershell
+   .\scripts\run.ps1 -Transport Both   # USB and Wi-Fi together; or -Transport Wifi
+   ```
+   The log shows `wifi: network "DeuxDisplay-xxxx" is up` and
+   `waiting for a client on USB (...) or Wi-Fi (192.168.137.1:27183)`.
+4. **On the tablet:** press **Back**, set **Connection** to *Wi-Fi (direct to PC)* and tap
+   **Apply**. The first time, Android asks to connect to `DeuxDisplay-xxxx`; tap **Connect**.
+   The log shows `session: client "..." over Wi-Fi`.
+5. **Unplug the cable** if you like; the display stays.
+
+Good to know:
+- While streaming over Wi-Fi, the tablet leaves its usual Wi-Fi network (most tablets can't join
+  two), so it has no internet until you close the app or switch back to USB.
+- Windows Firewall must allow the host inbound. `install-driver.ps1` adds the rule
+  (`scripts\enable-wireless.ps1`); otherwise Windows asks the first time. Allow it.
+- The PC needs a Wi-Fi adapter with Wi-Fi Direct (most recent Intel, Realtek and MediaTek
+  adapters). USB is still the lowest-latency option.
+
+**Switching modes:** in the app, set **Connection** to *USB* or *Wi-Fi* and **Apply**.
+`run.ps1 -Transport Both` serves both, so no restart is needed on the PC.
+
+### Tuning
+
+- **On the tablet** (press **Back** while streaming): resolution, frame rate (including 30 fps),
+  codec (Auto / H.264 / HEVC) and connection. Choices are remembered and override the PC defaults.
+- **On the PC:** `run.ps1` takes `-MaxFps`, `-MaxStreamSize 2560x1440`, `-Codec auto|h264|hevc`,
+  `-BitrateKbps`, `-Transport`, and `-Install`. The agent takes the same host options through
+  `.\scripts\install-autostart.ps1 -HostArgs '--codec hevc --max-fps 60'`.
+- Defaults live in `host/src/Server.h` (`ServeOptions`); the app's mode list is in
+  `android/.../stream/StreamModes.kt`.
+
+### Try the stream without a tablet
 ```powershell
-.\scripts\run.ps1 -Transport Wifi    # or Both (default) / Usb
+.\host\x64\Release\DeuxDisplayHost.exe --serve             # USB (127.0.0.1:27183) + Wi-Fi
+python tools\dump_receiver.py --seconds 10                 # acts as the tablet; writes out.h264
+ffplay out.h264
 ```
-Windows Firewall has to allow the host inbound. `install-driver.ps1` sets that up
-(`scripts\enable-wireless.ps1`), otherwise Windows asks the first time. The Wi-Fi option needs
-Android 10+ and a PC Wi-Fi adapter with Wi-Fi Direct.
 
-On the tablet:
+### On the tablet
 - **Touch** controls the PC: tap, drag, and multi-finger gestures are injected on the tablet's
   monitor (`--no-touch` on the host turns this off).
 - **Rotate** the tablet and the Windows display follows, like a pivoting monitor: Windows switches
