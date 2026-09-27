@@ -191,6 +191,7 @@ std::vector<uint8_t> SerializeConfig(const Config& msg)
     w.Put(msg.heightPx);
     w.Put(msg.fpsMilliHz);
     w.Put(msg.bitrateKbps);
+    w.Put(msg.rotationDegrees);
     return w.Take();
 }
 
@@ -206,7 +207,30 @@ std::optional<Config> ParseConfig(std::span<const uint8_t> payload)
         return std::nullopt;
     }
     msg.codec = static_cast<Codec>(codec);
+    uint16_t rotation = 0;
+    if (r.Get(rotation) && rotation % 90 == 0 && rotation < 360) // optional; older hosts omit it
+    {
+        msg.rotationDegrees = rotation;
+    }
     return msg;
+}
+
+std::vector<uint8_t> SerializeOrientation(uint16_t degrees)
+{
+    Writer w(2);
+    w.Put(degrees);
+    return w.Take();
+}
+
+std::optional<uint16_t> ParseOrientation(std::span<const uint8_t> payload)
+{
+    Reader r(payload);
+    uint16_t degrees = 0;
+    if (!r.Get(degrees) || degrees % 90 != 0 || degrees >= 360)
+    {
+        return std::nullopt;
+    }
+    return degrees;
 }
 
 std::vector<uint8_t> SerializePing(uint64_t pingId)

@@ -1,6 +1,7 @@
 package io.github.zengarv.deuxdisplay
 
 import android.app.Activity
+import android.content.res.Configuration
 import android.graphics.Color
 import android.media.MediaFormat
 import android.text.InputType
@@ -188,8 +189,21 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
             onPaired = ::onPaired,
             decodeWithoutSurface = noSurface,
             forcedDecoder = decoder,
-        ).also { it.start() }
+        ).also {
+            it.setOrientation(orientationDegrees(resources.configuration))
+            it.start()
+        }
     }
+
+    // Rotating the tablet rotates the Windows display to match, like a pivoting monitor. The
+    // stream keeps running: the host switches orientation and sends CONFIG with the new rotation.
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        client?.setOrientation(orientationDegrees(newConfig))
+    }
+
+    private fun orientationDegrees(config: Configuration): Int =
+        if (config.orientation == Configuration.ORIENTATION_PORTRAIT) 90 else 0
 
     /** A USB session handed us the PC's pairing code: remember it for Wi-Fi. */
     private fun onPaired(info: PairingInfo) {

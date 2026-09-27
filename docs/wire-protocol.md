@@ -55,6 +55,7 @@ Senders must write header and payload with a single write/send call (see latency
 | `0x22` | `FRAME_STATS`     | client → host    | Per-frame receive/decode/render timestamps     |
 | `0x30` | `CURSOR`          | host → client    | Reserved (cursor overlay, post-v1)             |
 | `0x40` | `INPUT`           | client → host    | Touch input on the stream                      |
+| `0x41` | `ORIENTATION`     | client → host    | Desktop orientation the client wants           |
 
 ### `HELLO` (client → host)
 
@@ -104,6 +105,12 @@ must also send `xdpi_milli`/`ydpi_milli`.
 | 2    | `height_px`         | Encoded frame height                          |
 | 4    | `fps_mhz`           | Target frame rate in millihertz               |
 | 4    | `bitrate_kbps`      | Target bitrate                                |
+| 2    | `rotation`          | *Optional.* Degrees clockwise (0/90/180/270) the client rotates each frame to show it upright; 0 if absent |
+
+Frames are always encoded in the display's native **scan-out** orientation (landscape), even when
+Windows has rotated the display: Desktop Duplication delivers them that way, and the client's
+compositor rotates them for free when showing the surface. `width_px`/`height_px` are therefore
+the scan-out size, not the rotated desktop size.
 
 If the host cannot serve the client (version/codec mismatch) it sends `BYE` instead.
 
@@ -153,6 +160,17 @@ estimate (NTP-style, assuming symmetric paths) used to put `FRAME_STATS` on the 
 All four are on the **host clock**. The client converts its own timestamps using the offset
 from `PING`/`PONG` (it pings the host periodically and keeps the minimum-RTT sample). A value of
 0 means unknown. Clients may sample (e.g. every Nth frame) to limit overhead.
+
+### `ORIENTATION` (client → host)
+
+| Size | Field     | Notes                                                                     |
+|-----:|-----------|---------------------------------------------------------------------------|
+| 2    | `degrees` | Desktop orientation, clockwise from native landscape: 0 or 90 (180/270 flipped) |
+
+Sent right after `HELLO` and whenever the client device rotates. The host rotates the Windows
+display to match (like Settings > Display > Orientation), capture restarts, and the host sends a
+new `CONFIG` whose `rotation` tells the client how to show the frames. Touch coordinates keep
+mapping onto the (now rotated) desktop, because the client normalizes them to its upright view.
 
 ### `INPUT` (client → host)
 

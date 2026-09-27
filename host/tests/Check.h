@@ -18,5 +18,6 @@ void RunProtocolTests();
 void RunEdidTests();
 void RunAnnexBTests();
 void RunPointerShapeTests();
+void RunRotationTests();
 void RunTouchTests();
 void RunAdbTests();

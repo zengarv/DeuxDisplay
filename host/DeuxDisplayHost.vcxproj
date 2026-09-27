@@ -55,6 +55,7 @@
     <ClCompile Include="src\capture\DesktopDuplicator.cpp" />
     <ClCompile Include="src\capture\OutputLocator.cpp" />
     <ClCompile Include="src\capture\PointerShape.cpp" />
+    <ClCompile Include="src\display\Orientation.cpp" />
     <ClCompile Include="src\display\VirtualDisplay.cpp" />
     <ClCompile Include="src\encode\AnnexB.cpp" />
     <ClCompile Include="src\encode\MfH264Encoder.cpp" />
@@ -77,7 +78,9 @@
     <ClInclude Include="src\capture\PointerShape.h" />
     <ClInclude Include="src\common\Clock.h" />
     <ClInclude Include="src\common\Log.h" />
+    <ClInclude Include="src\display\Orientation.h" />
     <ClInclude Include="src\display\VirtualDisplay.h" />
+    <ClInclude Include="src\render\Rotation.h" />
     <ClInclude Include="src\encode\AnnexB.h" />
     <ClInclude Include="src\encode\MfH264Encoder.h" />
     <ClInclude Include="src\input\TouchInjector.h" />

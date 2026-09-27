@@ -21,6 +21,7 @@ import io.github.zengarv.deuxdisplay.protocol.Pong
 import io.github.zengarv.deuxdisplay.protocol.TouchContact
 import io.github.zengarv.deuxdisplay.protocol.parseFixed
 import io.github.zengarv.deuxdisplay.protocol.parsePing
+import io.github.zengarv.deuxdisplay.protocol.serializeOrientation
 import io.github.zengarv.deuxdisplay.protocol.serializePing
 import io.github.zengarv.deuxdisplay.protocol.serializeTouchFrame
 import java.io.BufferedInputStream
@@ -83,6 +84,17 @@ class StreamClient(
     }
 
     /** Forwards one touch frame to the host; dropped while not connected. Any thread. */
+    // Desktop orientation to ask the host for: 0 landscape, 90 portrait. Sent after every HELLO.
+    @Volatile
+    private var orientationDegrees = 0
+
+    /** The tablet turned: ask the host to rotate the Windows display to match. */
+    fun setOrientation(degrees: Int) {
+        if (degrees == orientationDegrees) return
+        orientationDegrees = degrees
+        inputHandler?.post { send(MessageType.ORIENTATION, 0, serializeOrientation(degrees)) }
+    }
+
     fun sendTouch(contacts: List<TouchContact>) {
         if (contacts.isEmpty()) return
         val payload = serializeTouchFrame(contacts)
@@ -156,7 +168,10 @@ class StreamClient(
             output = s.getOutputStream()
             if (wifi != null) authenticate(input, authKey ?: throw RejectedException())
             send(MessageType.HELLO, 0, hello.serialize())
-            Log.i(TAG, "connected, sent HELLO $hello")
+            // Always state the orientation, so a display left in portrait by an earlier session
+            // returns to landscape if the tablet is landscape now.
+            send(MessageType.ORIENTATION, 0, serializeOrientation(orientationDegrees))
+            Log.i(TAG, "connected, sent HELLO $hello, orientation $orientationDegrees")
 
             var decoder: VideoDecoder? = null
             val clock = ClockSync()
@@ -201,6 +216,7 @@ class StreamClient(
                                     }
                                 },
                                 forcedDecoder = forcedDecoder,
+                                rotationDegrees = config.rotationDegrees,
                             )
                             listener.onStatus(null)
                         }

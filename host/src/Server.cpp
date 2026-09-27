@@ -14,12 +14,14 @@
 #include "capture/OutputLocator.h"
 #include "common/Clock.h"
 #include "common/Log.h"
+#include "display/Orientation.h"
 #include "display/VirtualDisplay.h"
 #include "encode/AnnexB.h"
 #include "encode/MfH264Encoder.h"
 #include "input/TouchInjector.h"
 #include "protocol/Pairing.h"
 #include "render/FrameComposer.h"
+#include "render/Rotation.h"
 #include "transport/Tcp.h"
 #include "wireless/PairingStore.h"
 #include "wireless/WifiDirectAp.h"
@@ -70,6 +72,7 @@ struct Pipeline
     UINT streamWidth = 0; // encoded size
     UINT streamHeight = 0;
     bool hevc = false;
+    uint16_t rotation = 0; // clockwise degrees the client applies (CONFIG)
     UINT fps = 60;
 
     HRESULT Initialize(const ServeOptions& options, bool preferHevc)
@@ -108,6 +111,15 @@ struct Pipeline
         const DXGI_OUTDUPL_DESC desc = duplicator.Desc();
         width = desc.ModeDesc.Width;
         height = desc.ModeDesc.Height;
+        // Frames stay in scan-out (native landscape) orientation even when Windows rotates the
+        // display; the client rotates them for display.
+        rotation = render::ClientRotationFor(desc.Rotation);
+        // ModeDesc reports the rotated (desktop) size, but the duplicated texture keeps the
+        // scan-out shape: size everything from the texture.
+        if (rotation == 90 || rotation == 270)
+        {
+            std::swap(width, height);
+        }
         const auto& rate = desc.ModeDesc.RefreshRate;
         fps = rate.Denominator ? (rate.Numerator + rate.Denominator / 2) / rate.Denominator : 60;
         if (fps == 0)
@@ -125,7 +137,7 @@ struct Pipeline
         streamWidth = static_cast<UINT>(width * scale) & ~1u;
         streamHeight = static_cast<UINT>(height * scale) & ~1u;
 
-        hr = composer.Initialize(device.Get(), width, height, streamWidth, streamHeight);
+        hr = composer.Initialize(device.Get(), width, height, streamWidth, streamHeight, rotation);
         if (FAILED(hr))
         {
             return hr;
@@ -147,8 +159,9 @@ struct Pipeline
             return hr;
         }
         hevc = settings.hevc;
-        Log(L"pipeline: %s %ux%u@%u -> stream %ux%u %s, encoder \"%s\"", output.deviceName.c_str(), width, height,
-            fps, streamWidth, streamHeight, hevc ? L"HEVC" : L"H.264", encoder.Name().c_str());
+        Log(L"pipeline: %s %ux%u@%u -> stream %ux%u %s, rotation %u, encoder \"%s\"", output.deviceName.c_str(),
+            width, height, fps, streamWidth, streamHeight, hevc ? L"HEVC" : L"H.264", rotation,
+            encoder.Name().c_str());
         return S_OK;
     }
 };
@@ -280,7 +293,7 @@ bool SendConfig(transport::Connection& conn, const Pipeline& p, unsigned bitrate
 {
     protocol::Config config{protocol::kVersion, p.hevc ? protocol::Codec::Hevc : protocol::Codec::H264,
                             static_cast<uint16_t>(p.streamWidth),
-                            static_cast<uint16_t>(p.streamHeight), p.fps * 1000, bitrateKbps};
+                            static_cast<uint16_t>(p.streamHeight), p.fps * 1000, bitrateKbps, p.rotation};
     const auto payload = protocol::SerializeConfig(config);
     return conn.Send(MessageType::Config, 0, NowMicros(), payload);
 }
@@ -547,6 +560,7 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
 
     std::atomic<bool> stop{false};
     std::atomic<bool> keyframeRequested{false};
+    std::atomic<int> requestedOrientation{-1}; // degrees from the client, -1 = none pending
     std::thread reader([&] {
         protocol::Header h;
         std::vector<uint8_t> p;
@@ -563,6 +577,12 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
                 break;
             case MessageType::RequestKeyframe:
                 keyframeRequested = true;
+                break;
+            case MessageType::Orientation:
+                if (auto degrees = protocol::ParseOrientation(p))
+                {
+                    requestedOrientation = *degrees;
+                }
                 break;
             case MessageType::Input:
                 if (options.touchInput)
@@ -635,6 +655,14 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
             sleeper.SleepMicros(nextFrameUs - nowUs);
         }
 
+        // The tablet turned: rotate the Windows display to match (like a pivoting monitor).
+        // Capture then reports ACCESS_LOST, and the rebuilt pipeline sends CONFIG with the rotation.
+        if (const int degrees = requestedOrientation.exchange(-1);
+            degrees >= 0 && options.outputName.empty())
+        {
+            SetDisplayOrientation(pipeline.output.deviceName, static_cast<uint16_t>(degrees));
+        }
+
         if (keyframeRequested.exchange(false))
         {
             pipeline.encoder.RequestKeyframe();
@@ -670,6 +698,7 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
             const UINT oldWidth = pipeline.width;
             const UINT oldHeight = pipeline.height;
             const UINT oldFps = pipeline.fps;
+            const uint16_t oldRotation = pipeline.rotation;
             while (!stop && FAILED(pipeline.Initialize(options, preferHevc)))
             {
                 Sleep(250);
@@ -677,7 +706,8 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
             haveFrame = false;
             lastCodecConfig.clear();
             touch.SetTarget(pipeline.desktopRect);
-            if (pipeline.width != oldWidth || pipeline.height != oldHeight || pipeline.fps != oldFps)
+            if (pipeline.width != oldWidth || pipeline.height != oldHeight || pipeline.fps != oldFps ||
+                pipeline.rotation != oldRotation)
             {
                 if (!SendConfig(conn, pipeline, options.bitrateKbps))
                 {
@@ -691,6 +721,13 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
             continue;
         }
 
+        if (!haveFrame && frame.desktop)
+        {
+            D3D11_TEXTURE2D_DESC td{};
+            frame.desktop->GetDesc(&td);
+            Log(L"capture: first frame %ux%u (mode %ux%u, dxgi rotation %d)", td.Width, td.Height, pipeline.width,
+                pipeline.height, static_cast<int>(pipeline.duplicator.Desc().Rotation));
+        }
         times.acquired = NowMicros();
         times.present = frame.presentQpc ? QpcToMicros(frame.presentQpc) : times.acquired;
         nextFrameUs = times.acquired + frameIntervalUs;

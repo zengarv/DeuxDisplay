@@ -33,6 +33,7 @@ enum class MessageType : uint8_t
     FrameStats = 0x22,
     Cursor = 0x30,
     Input = 0x40,
+    Orientation = 0x41,
 };
 
 namespace video_flags
@@ -84,7 +85,15 @@ struct Config
     uint16_t heightPx = 0;
     uint32_t fpsMilliHz = 0;
     uint32_t bitrateKbps = 0;
+    // Optional: degrees clockwise (0/90/180/270) the client rotates each frame to show it upright.
+    // Frames are always encoded in the display's native (landscape) scan-out orientation.
+    uint16_t rotationDegrees = 0;
 };
+
+// ORIENTATION payload: the desktop orientation the client wants, in degrees clockwise from the
+// display's native landscape (0 = landscape, 90 = portrait; 180/270 = flipped variants).
+std::vector<uint8_t> SerializeOrientation(uint16_t degrees);
+std::optional<uint16_t> ParseOrientation(std::span<const uint8_t> payload);
 
 struct Pong
 {

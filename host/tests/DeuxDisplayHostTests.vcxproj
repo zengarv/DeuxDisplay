@@ -41,6 +41,7 @@
     <ClCompile Include="EdidTests.cpp" />
     <ClCompile Include="AnnexBTests.cpp" />
     <ClCompile Include="PointerShapeTests.cpp" />
+    <ClCompile Include="RotationTests.cpp" />
     <ClCompile Include="TouchTests.cpp" />
     <ClCompile Include="AdbTests.cpp" />
     <ClCompile Include="..\src\adb\AdbProtocol.cpp" />

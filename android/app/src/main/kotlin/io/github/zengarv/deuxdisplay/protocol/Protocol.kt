@@ -42,6 +42,7 @@ object MessageType {
     const val FRAME_STATS: Int = 0x22
     const val CURSOR: Int = 0x30
     const val INPUT: Int = 0x40
+    const val ORIENTATION: Int = 0x41
 }
 
 enum class Codec(val wire: Int) {
@@ -150,8 +151,10 @@ data class Config(
     val fpsMilliHz: Int,
     val bitrateKbps: Int,
     val protocolVersion: Int = Protocol.VERSION,
+    /** Degrees clockwise to rotate each frame for display (optional on the wire; 0 if absent). */
+    val rotationDegrees: Int = 0,
 ) {
-    fun serialize(): ByteArray = le(16).apply {
+    fun serialize(): ByteArray = le(18).apply {
         putShort(protocolVersion.toShort())
         put(codec.wire.toByte())
         put(0)
@@ -159,6 +162,7 @@ data class Config(
         putShort(heightPx.toShort())
         putInt(fpsMilliHz)
         putInt(bitrateKbps)
+        putShort(rotationDegrees.toShort())
     }.array()
 
     companion object {
@@ -171,7 +175,9 @@ data class Config(
             val fps = int
             val bitrate = int
             val codec = Codec.fromWire(codecWire) ?: throw ProtocolException("unknown codec $codecWire")
-            Config(codec, w, h, fps, bitrate, version)
+            // Optional trailing rotation; older hosts don't send it.
+            val rotation = if (remaining() >= 2) u16() else 0
+            Config(codec, w, h, fps, bitrate, version, if (rotation % 90 == 0 && rotation < 360) rotation else 0)
         }
     }
 }
@@ -269,6 +275,15 @@ data class PairingInfo(val code: String, val hostName: String) {
 }
 
 fun serializePing(pingId: Long): ByteArray = le(8).putLong(pingId).array()
+
+/** ORIENTATION payload: desktop orientation, degrees clockwise from landscape (0 or 90 in practice). */
+fun serializeOrientation(degrees: Int): ByteArray = le(2).putShort(degrees.toShort()).array()
+
+fun parseOrientation(payload: ByteArray): Int = parsing(payload) {
+    val degrees = u16()
+    if (degrees % 90 != 0 || degrees >= 360) throw ProtocolException("bad orientation $degrees")
+    degrees
+}
 
 fun parsePing(payload: ByteArray): Long = parsing(payload) { long }
 

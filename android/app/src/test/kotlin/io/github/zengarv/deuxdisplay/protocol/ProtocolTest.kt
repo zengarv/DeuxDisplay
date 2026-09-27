@@ -77,10 +77,25 @@ class ProtocolTest {
 
     @Test
     fun configRoundTrip() {
-        val config = Config(Codec.H264, 2408, 1720, 60_000, 20_000)
+        val config = Config(Codec.H264, 2408, 1720, 60_000, 20_000, rotationDegrees = 90)
         val bytes = config.serialize()
-        assertEquals(16, bytes.size)
+        assertEquals(18, bytes.size)
         assertEquals(config, Config.parse(bytes))
+        // Older host: no rotation field.
+        assertEquals(0, Config.parse(bytes.copyOf(16)).rotationDegrees)
+    }
+
+    @Test
+    fun orientationRoundTrip() {
+        assertEquals(90, parseOrientation(serializeOrientation(90)))
+        assertEquals(0, parseOrientation(serializeOrientation(0)))
+        // Same bytes as the host: little-endian u16.
+        assertArrayEquals(byteArrayOf(90, 0), serializeOrientation(90))
+    }
+
+    @Test(expected = ProtocolException::class)
+    fun orientationRejectsOddAngles() {
+        parseOrientation(serializeOrientation(45))
     }
 
     @Test

@@ -134,3 +134,13 @@ Plug the tablet in with the app open and it becomes a monitor, like a cable to a
       sends nothing while a finger is still. Re-inject active contacts every ~50 ms on the host,
       and treat a cancelled contact as a new down (seen on the Pad Go, 2026-09-27)
 - [ ] Pen (pressure/tilt/hover) via synthetic pointer devices (`PT_PEN`)
+
+### M8 — Rotation
+- [x] App follows the tablet's rotation (`fullUser`) and sends `ORIENTATION`; host rotates the
+      Windows display (`ChangeDisplaySettingsEx`, no admin); `CONFIG` carries the rotation and the
+      app applies it with `MediaCodec` `KEY_ROTATION` (frames stay landscape on the wire)
+- [x] Pointer drawn rotated into the scan-out frame (`render/Rotation.h`, unit tested)
+- [x] **Verified on the Pad Go:** portrait ↔ landscape rotates Windows' display and the stream
+      shows upright; note DDA reports the rotated size in `ModeDesc` but hands over scan-out-sized
+      textures
+- [ ] Confirm pointer position/orientation in portrait by eye; touch in portrait

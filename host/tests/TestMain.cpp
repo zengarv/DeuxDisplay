@@ -6,6 +6,7 @@ int main()
     RunEdidTests();
     RunAnnexBTests();
     RunPointerShapeTests();
+    RunRotationTests();
     RunTouchTests();
     RunAdbTests();
 

@@ -328,6 +328,10 @@ Android 10+ and a PC Wi-Fi adapter with Wi-Fi Direct.
 On the tablet:
 - **Touch** controls the PC: tap, drag, and multi-finger gestures are injected on the tablet's
   monitor (`--no-touch` on the host turns this off).
+- **Rotate** the tablet and the Windows display follows, like a pivoting monitor: Windows switches
+  it to portrait and back, and windows reflow. The app follows the tablet's auto-rotate setting.
+  Frames stay landscape on the wire and the tablet's compositor rotates them, so portrait costs
+  no extra latency (there's a ~0.5 s re-sync at the moment of rotation).
 - **Back** opens the settings: resolution and frame rate from what the device supports (or
   *Auto*), the codec (*Auto*, H.264 or HEVC), the connection (USB or Wi-Fi), and a field for
   typing a pairing code. Applying reconnects, and the monitor comes back in the new mode. The

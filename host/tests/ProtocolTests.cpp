@@ -94,14 +94,27 @@ void HelloRoundTrip()
 
 void ConfigRoundTrip()
 {
-    Config c{kVersion, Codec::H264, 2408, 1720, 60000, 20000};
+    Config c{kVersion, Codec::H264, 2408, 1720, 60000, 20000, 90};
     auto bytes = SerializeConfig(c);
-    CHECK(bytes.size() == 16);
+    CHECK(bytes.size() == 18);
     auto p = ParseConfig(bytes);
     CHECK(p.has_value());
     CHECK(p->codec == Codec::H264 && p->widthPx == 2408 && p->heightPx == 1720);
     CHECK(p->fpsMilliHz == 60000 && p->bitrateKbps == 20000);
+    CHECK(p->rotationDegrees == 90);
+
+    auto old = ParseConfig(std::span(bytes).first(16)); // older host: no rotation field
+    CHECK(old.has_value() && old->rotationDegrees == 0);
     CHECK(!ParseConfig(std::span(bytes).first(15)).has_value());
+}
+
+void OrientationRoundTrip()
+{
+    CHECK(ParseOrientation(SerializeOrientation(0)) == uint16_t{0});
+    CHECK(ParseOrientation(SerializeOrientation(90)) == uint16_t{90});
+    CHECK(!ParseOrientation(SerializeOrientation(45)).has_value());
+    CHECK(!ParseOrientation(SerializeOrientation(360)).has_value());
+    CHECK(!ParseOrientation({}).has_value());
 }
 
 void PingPongStatsRoundTrip()
@@ -231,6 +244,7 @@ void RunProtocolTests()
     HeaderRejectsBadInput();
     HelloRoundTrip();
     ConfigRoundTrip();
+    OrientationRoundTrip();
     PingPongStatsRoundTrip();
     TouchFrameRoundTrip();
     AuthMessagesRoundTrip();

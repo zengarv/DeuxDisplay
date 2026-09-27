@@ -30,6 +30,9 @@ class VideoDecoder(
     private val onNeedKeyframe: () -> Unit,
     private val onFrameTiming: FrameTimingListener? = null,
     forcedDecoder: String? = null, // debug: use this MediaCodec component instead of auto-picking
+    // Degrees clockwise to rotate frames on screen (CONFIG rotation). Applied by the compositor
+    // when it shows the surface, so it costs nothing in the decode path.
+    private val rotationDegrees: Int = 0,
 ) {
     /** Per-frame timestamps on the client clock (µs, System.nanoTime based); 0 = unknown. */
     fun interface FrameTimingListener {
@@ -188,6 +191,7 @@ class VideoDecoder(
         MediaFormat.createVideoFormat(mime, width, height).apply {
             // Keyframes of a large desktop can exceed the default input buffer size.
             setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, width * height * 3 / 2)
+            if (rotationDegrees != 0) setInteger(MediaFormat.KEY_ROTATION, rotationDegrees)
         }
 
     private data class DecoderChoice(val name: String, val lowLatency: Boolean)
