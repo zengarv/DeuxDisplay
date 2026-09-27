@@ -334,8 +334,7 @@ cd android; .\gradlew.bat assembleDebug; cd ..
 With a release, either put `DeuxDisplay-<version>.apk` in the extracted folder so
 `run.ps1 -Install` finds it, or install it on the tablet directly: open the Releases page in the
 tablet's browser, download the APK and open it (allow installing unknown apps when asked).
-Newer releases install over older ones. The one exception is v0.1.0, which was signed with a
-different key: uninstall it once before installing a later version.
+Newer releases install over older ones.
 
 `install-driver.ps1` trusts a locally generated signing certificate on your PC; read
 [driver/README.md](driver/README.md) first. To check the driver alone:
