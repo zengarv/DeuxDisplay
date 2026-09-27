@@ -17,6 +17,9 @@ namespace dd::input
 // The process has one injected touch device, shared by all sessions: each injector owns its own
 // range of pointer IDs, and every injected frame also repeats the other sessions' active contacts
 // (Windows expects each frame to list all contacts that are down).
+//
+// Windows moves its one cursor to every touch, so once the last finger lifts the cursor goes
+// back to where it was before the touch, unless the mouse moved it off the tablet meanwhile.
 class TouchInjector
 {
   public:

@@ -16,6 +16,10 @@ namespace
 constexpr size_t kBanks = driver::kMaxMonitors;
 constexpr size_t kMaxPointers = kBanks * protocol::kMaxTouchContacts;
 
+// Windows moves the one system cursor to every touch. The cursor goes back to where it was once
+// the last finger lifts, after this delay so the tap's promoted mouse click lands first.
+constexpr DWORD kCursorRestoreDelayMs = 100;
+
 // Process-wide injection state, shared by every session's injector.
 struct SharedTouch
 {
@@ -24,6 +28,12 @@ struct SharedTouch
     // Contacts currently down, as last injected (flags already "update"), by pointer ID.
     std::array<bool, kMaxPointers> down{};
     std::array<POINTER_TOUCH_INFO, kMaxPointers> last{};
+
+    // Cursor position from before the first finger went down, pending restore.
+    bool cursorSaved = false;
+    POINT savedCursor{};
+    RECT restoreRect{}; // output of the last lift; a cursor outside it was moved by the mouse
+    PTP_TIMER restoreTimer = nullptr;
 };
 
 SharedTouch& Shared()
@@ -44,6 +54,63 @@ bool EnsureTouchInjection()
         return false;
     }();
     return ok;
+}
+
+bool AnyDown(const SharedTouch& shared)
+{
+    return std::find(shared.down.begin(), shared.down.end(), true) != shared.down.end();
+}
+
+void MoveCursor(POINT pt)
+{
+    // SetCursorPos is exact but leaves the cursor hidden after touch; mouse input shows it again.
+    const int left = GetSystemMetrics(SM_XVIRTUALSCREEN);
+    const int top = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    const int width = std::max(GetSystemMetrics(SM_CXVIRTUALSCREEN) - 1, 1);
+    const int height = std::max(GetSystemMetrics(SM_CYVIRTUALSCREEN) - 1, 1);
+    INPUT input{};
+    input.type = INPUT_MOUSE;
+    input.mi.dx = MulDiv(pt.x - left, 65535, width);
+    input.mi.dy = MulDiv(pt.y - top, 65535, height);
+    input.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
+    SendInput(1, &input, sizeof(input));
+    SetCursorPos(pt.x, pt.y);
+}
+
+void CALLBACK RestoreCursor(PTP_CALLBACK_INSTANCE, PVOID context, PTP_TIMER)
+{
+    auto& shared = *static_cast<SharedTouch*>(context);
+    std::lock_guard lock(shared.lock);
+    if (!shared.cursorSaved || AnyDown(shared))
+    {
+        return; // a new touch started; it restores when it ends
+    }
+    shared.cursorSaved = false;
+    POINT now{};
+    // Left the touched output during the touch: the user moved the mouse, keep it there.
+    if (GetCursorPos(&now) && PtInRect(&shared.restoreRect, now) &&
+        (now.x != shared.savedCursor.x || now.y != shared.savedCursor.y))
+    {
+        MoveCursor(shared.savedCursor);
+    }
+}
+
+void ArmCursorRestore(SharedTouch& shared, DWORD delayMs)
+{
+    if (!shared.restoreTimer)
+    {
+        // Lives for the process, like the touch device.
+        shared.restoreTimer = CreateThreadpoolTimer(RestoreCursor, &shared, nullptr);
+        if (!shared.restoreTimer)
+        {
+            return;
+        }
+    }
+    // Relative due time in 100 ns units; 0 disarms. Re-arming replaces the pending due time.
+    ULARGE_INTEGER due{};
+    due.QuadPart = static_cast<ULONGLONG>(-static_cast<LONGLONG>(delayMs) * 10'000);
+    FILETIME ft{due.LowPart, due.HighPart};
+    SetThreadpoolTimer(shared.restoreTimer, delayMs ? &ft : nullptr, 0, 0);
 }
 
 LONG MapAxis(uint16_t value, LONG begin, LONG end)
@@ -167,7 +234,24 @@ void TouchInjector::Send(const std::vector<ContactEvent>& events)
             infos[count++] = shared.last[id];
         }
     }
+    // First finger down anywhere: remember the cursor, unless an earlier touch's restore is
+    // still pending (quick taps), which keeps the original position.
+    const bool starting = !AnyDown(shared) && std::any_of(events.begin(), events.end(), [](const auto& e) {
+                              return e.state == ContactState::Down;
+                          });
+    POINT cursor{};
+    const bool haveCursor = starting && !shared.cursorSaved && GetCursorPos(&cursor);
+
     const bool injected = InjectTouchInput(count, infos.data()) != FALSE;
+    if (starting && injected)
+    {
+        ArmCursorRestore(shared, 0);
+        if (haveCursor)
+        {
+            shared.cursorSaved = true;
+            shared.savedCursor = cursor;
+        }
+    }
     for (UINT32 i = 0; i < ownCount; ++i)
     {
         // A lift always clears the contact, even if injection failed, so it can't stay stuck in
@@ -181,6 +265,11 @@ void TouchInjector::Send(const std::vector<ContactEvent>& events)
             shared.last[id] = info;
             shared.last[id].pointerInfo.pointerFlags = FlagsFor(ContactState::Update);
         }
+    }
+    if (shared.cursorSaved && !AnyDown(shared))
+    {
+        shared.restoreRect = m_target;
+        ArmCursorRestore(shared, kCursorRestoreDelayMs);
     }
     if (!injected && m_failuresLogged < 5)
     {
