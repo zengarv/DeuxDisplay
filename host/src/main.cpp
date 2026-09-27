@@ -139,7 +139,7 @@ void PrintUsage()
                  L"      instead (debugging). Over USB the host keeps `adb reverse` in place for every attached\n"
                  L"      tablet, so plugging one in (app open) adds the display; --no-adb turns that off.\n"
                  L"      A resolution/frame rate picked in the tablet app overrides --max-stream-size/--max-fps.\n"
-                 L"      Touches on the tablet are injected on the display unless --no-touch is given.\n"
+                 L"      Touches and dock shortcuts from the tablet are injected unless --no-touch is given.\n"
                  L"  DeuxDisplayHost --create-display [SECONDS]\n"
                  L"      Plug a 2408x1720 virtual monitor until Enter is pressed (or for SECONDS)\n"
                  L"  DeuxDisplayHost --pair [--reset]   Show (or replace) the Wi-Fi pairing code\n"

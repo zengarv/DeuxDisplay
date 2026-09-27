@@ -18,7 +18,9 @@
 #include "display/VirtualDisplay.h"
 #include "encode/AnnexB.h"
 #include "encode/MfH264Encoder.h"
+#include "input/Shortcuts.h"
 #include "input/TouchInjector.h"
+#include "media/MediaControls.h"
 #include "protocol/Pairing.h"
 #include "render/FrameComposer.h"
 #include "render/Rotation.h"
@@ -556,6 +558,15 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
     // Declared before the reader thread, which injects into it; lifts all contacts on exit.
     input::TouchInjector touch;
     touch.SetTarget(pipeline.desktopRect);
+    // The dock's shortcuts, volume and play/pause state. Its first MEDIA_STATE also tells the
+    // client that this host takes ACTION messages. Off along with touch (--no-touch).
+    std::optional<media::MediaControls> media;
+    if (options.touchInput)
+    {
+        media.emplace([&conn](const protocol::MediaState& state) {
+            conn.Send(MessageType::MediaState, 0, NowMicros(), protocol::SerializeMediaState(state));
+        });
+    }
 
     std::atomic<bool> stop{false};
     std::atomic<bool> keyframeRequested{false};
@@ -591,6 +602,19 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
                     if (auto frame = protocol::ParseTouchFrame(p))
                     {
                         touch.Inject(*frame);
+                    }
+                }
+                break;
+            case MessageType::Action:
+                if (auto action = protocol::ParseAction(p); action && media)
+                {
+                    if (*action == protocol::Action::VolumeUp || *action == protocol::Action::VolumeDown)
+                    {
+                        media->StepVolume(*action == protocol::Action::VolumeUp ? 1 : -1);
+                    }
+                    else
+                    {
+                        input::SendShortcut(*action);
                     }
                 }
                 break;

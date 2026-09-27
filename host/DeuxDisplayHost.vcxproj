@@ -59,8 +59,10 @@
     <ClCompile Include="src\display\VirtualDisplay.cpp" />
     <ClCompile Include="src\encode\AnnexB.cpp" />
     <ClCompile Include="src\encode\MfH264Encoder.cpp" />
+    <ClCompile Include="src\input\Shortcuts.cpp" />
     <ClCompile Include="src\input\TouchInjector.cpp" />
     <ClCompile Include="src\input\TouchTracker.cpp" />
+    <ClCompile Include="src\media\MediaControls.cpp" />
     <ClCompile Include="src\protocol\Pairing.cpp" />
     <ClCompile Include="src\protocol\Protocol.cpp" />
     <ClCompile Include="src\render\FrameComposer.cpp" />
@@ -83,8 +85,10 @@
     <ClInclude Include="src\render\Rotation.h" />
     <ClInclude Include="src\encode\AnnexB.h" />
     <ClInclude Include="src\encode\MfH264Encoder.h" />
+    <ClInclude Include="src\input\Shortcuts.h" />
     <ClInclude Include="src\input\TouchInjector.h" />
     <ClInclude Include="src\input\TouchTracker.h" />
+    <ClInclude Include="src\media\MediaControls.h" />
     <ClInclude Include="src\protocol\Pairing.h" />
     <ClInclude Include="src\protocol\Protocol.h" />
     <ClInclude Include="src\render\FrameComposer.h" />
