@@ -12,6 +12,7 @@ import io.github.zengarv.deuxdisplay.protocol.Config
 import io.github.zengarv.deuxdisplay.protocol.FrameStats
 import io.github.zengarv.deuxdisplay.protocol.Header
 import io.github.zengarv.deuxdisplay.protocol.Hello
+import io.github.zengarv.deuxdisplay.protocol.MediaState
 import io.github.zengarv.deuxdisplay.protocol.MessageType
 import io.github.zengarv.deuxdisplay.protocol.Pairing
 import io.github.zengarv.deuxdisplay.protocol.PairingInfo
@@ -21,6 +22,7 @@ import io.github.zengarv.deuxdisplay.protocol.Pong
 import io.github.zengarv.deuxdisplay.protocol.TouchContact
 import io.github.zengarv.deuxdisplay.protocol.parseFixed
 import io.github.zengarv.deuxdisplay.protocol.parsePing
+import io.github.zengarv.deuxdisplay.protocol.serializeAction
 import io.github.zengarv.deuxdisplay.protocol.serializeOrientation
 import io.github.zengarv.deuxdisplay.protocol.serializePing
 import io.github.zengarv.deuxdisplay.protocol.serializeTouchFrame
@@ -49,6 +51,8 @@ class StreamClient(
     private val onPaired: ((PairingInfo) -> Unit)? = null, // USB: the host sent its pairing code
     private val decodeWithoutSurface: Boolean = false, // latency experiment: nothing is displayed
     private val forcedDecoder: String? = null, // debug: MediaCodec component name to use
+    // The host's volume/playback state; the first one also means it takes ACTION messages.
+    private val onMediaState: ((MediaState) -> Unit)? = null,
 ) {
     /** The host closed a Wi-Fi session during authentication: the pairing code is wrong. */
     private class RejectedException : Exception()
@@ -99,6 +103,12 @@ class StreamClient(
         if (contacts.isEmpty()) return
         val payload = serializeTouchFrame(contacts)
         inputHandler?.post { send(MessageType.INPUT, 0, payload) }
+    }
+
+    /** A dock shortcut or volume key (DockAction); dropped while not connected. Any thread. */
+    fun sendAction(action: Int) {
+        val payload = serializeAction(action)
+        inputHandler?.post { send(MessageType.ACTION, 0, payload) }
     }
 
     fun stop() {
@@ -232,6 +242,8 @@ class StreamClient(
                             val pairing = PairingInfo.parse(frameBuffer.copyOf(header.length))
                             if (Pairing.normalize(pairing.code) != null) onPaired?.invoke(pairing)
                         }
+                        MessageType.MEDIA_STATE ->
+                            onMediaState?.invoke(MediaState.parse(frameBuffer.copyOf(header.length)))
                         MessageType.BYE -> {
                             Log.i(TAG, "host said BYE")
                             return

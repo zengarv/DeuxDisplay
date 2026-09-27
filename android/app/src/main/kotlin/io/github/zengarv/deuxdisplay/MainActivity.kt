@@ -24,7 +24,10 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.Spinner
+import android.widget.Switch
 import android.widget.TextView
+import io.github.zengarv.deuxdisplay.protocol.DockAction
+import io.github.zengarv.deuxdisplay.protocol.MediaState
 import io.github.zengarv.deuxdisplay.protocol.Pairing
 import io.github.zengarv.deuxdisplay.protocol.PairingInfo
 import io.github.zengarv.deuxdisplay.stream.DisplayInfo
@@ -63,6 +66,13 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
     private var streaming = false
     private var settingsOpened = false // opened over a running stream with Back
 
+    // Shortcut dock and volume keys. Both need a host that takes ACTION, which it signals with
+    // MEDIA_STATE; until then the volume keys control the tablet as usual.
+    private lateinit var dock: DockView
+    private lateinit var volumeIndicator: VolumeIndicator
+    private var dockEnabled = true
+    private var mediaState: MediaState? = null // this session's last, null = host has no controls
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -83,12 +93,25 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
             textSize = 18f
             gravity = Gravity.CENTER
         }
+        dockEnabled = getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(KEY_DOCK, true)
+        dock = DockView(this, getSharedPreferences(DOCK_PREFS, MODE_PRIVATE)) { client?.sendAction(it) }
+        volumeIndicator = VolumeIndicator(this)
         settings = buildSettings()
 
         setContentView(
             FrameLayout(this).apply {
                 setBackgroundColor(Color.BLACK)
                 addView(surfaceView)
+                addView(dock, FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    Gravity.TOP or Gravity.START,
+                ))
+                addView(volumeIndicator, FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    Gravity.TOP or Gravity.CENTER_HORIZONTAL,
+                ).apply { topMargin = dp(24) })
                 addView(status, FrameLayout.LayoutParams(
                     FrameLayout.LayoutParams.MATCH_PARENT,
                     FrameLayout.LayoutParams.MATCH_PARENT,
@@ -139,14 +162,43 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
         return true
     }
 
-    // Back toggles the stream settings while streaming (touches go to the PC).
+    // Back toggles the stream settings while streaming (touches go to the PC). The volume keys
+    // change the Windows volume instead of the tablet's, which stays as it was.
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         if (keyCode == KeyEvent.KEYCODE_BACK && streaming) {
             settingsOpened = !settingsOpened
             updateSettingsVisibility()
             return true
         }
+        if (isVolumeKey(keyCode) && hostVolumeKeys()) {
+            client?.sendAction(if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) DockAction.VOLUME_UP else DockAction.VOLUME_DOWN)
+            mediaState?.let(volumeIndicator::show) // updated when the host reports the new level
+            return true
+        }
         return super.onKeyDown(keyCode, event)
+    }
+
+    override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
+        if (isVolumeKey(keyCode) && hostVolumeKeys()) return true
+        return super.onKeyUp(keyCode, event)
+    }
+
+    private fun isVolumeKey(keyCode: Int) =
+        keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN
+
+    private fun hostVolumeKeys() = streaming && mediaState != null
+
+    /** The host's volume and playback state (network thread). */
+    private fun onMediaState(state: MediaState) {
+        runOnUiThread {
+            val previous = mediaState
+            mediaState = state
+            dock.setMediaState(state)
+            if (previous != null && (previous.volumePercent != state.volumePercent || previous.muted != state.muted)) {
+                volumeIndicator.show(state)
+            }
+            updateDockVisibility()
+        }
     }
 
     // The stream lives exactly as long as the surface: when the tablet sleeps or the app goes to
@@ -187,6 +239,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
             wifi = wifi,
             authKey = secrets?.authKey,
             onPaired = ::onPaired,
+            onMediaState = ::onMediaState,
             decodeWithoutSurface = noSurface,
             forcedDecoder = decoder,
         ).also {
@@ -229,7 +282,10 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
             status.text = text.orEmpty()
             status.visibility = if (text == null) View.GONE else View.VISIBLE
             streaming = text == null
-            if (!streaming) settingsOpened = false
+            if (!streaming) {
+                settingsOpened = false
+                mediaState = null // the next session tells us again
+            }
             updateSettingsVisibility()
         }
     }
@@ -283,6 +339,15 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
             minWidth = dp(260)
         }
 
+        val dockSwitch = Switch(this).apply {
+            isChecked = dockEnabled
+            setOnCheckedChangeListener { _, checked ->
+                dockEnabled = checked
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(KEY_DOCK, checked).apply()
+                updateDockVisibility()
+            }
+        }
+
         val apply = Button(this).apply {
             setText(R.string.setting_apply)
             setOnClickListener { applySettings() }
@@ -300,6 +365,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
             addView(settingRow(R.string.setting_refresh, refreshSpinner))
             addView(settingRow(R.string.setting_codec, codecSpinner))
             addView(settingRow(R.string.setting_connection, connectionSpinner))
+            addView(settingRow(R.string.setting_dock, dockSwitch))
             if (wifiSupported) {
                 addView(pairingLabel)
                 addView(codeField)
@@ -387,6 +453,12 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
 
     private fun updateSettingsVisibility() {
         settings.visibility = if (!streaming || settingsOpened) View.VISIBLE else View.GONE
+        updateDockVisibility()
+    }
+
+    private fun updateDockVisibility() {
+        val show = dockEnabled && streaming && !settingsOpened && mediaState != null
+        dock.visibility = if (show) View.VISIBLE else View.GONE
     }
 
     /** Runs the panel at the picked rate too, so frames aren't shown on a mismatched refresh. */
@@ -433,6 +505,8 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
         private const val KEY_REFRESH = "refresh_hz"
         private const val KEY_WIFI = "wifi"
         private const val KEY_CODEC = "codec"
+        private const val KEY_DOCK = "dock"
+        private const val DOCK_PREFS = "dock"
 
         /** Joining the PC's network needs WifiNetworkSpecifier (Android 10). */
         private val wifiSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q

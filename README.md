@@ -430,7 +430,13 @@ ffplay out.h264
 
 ### On the tablet
 - **Touch** controls the PC: tap, drag, and multi-finger gestures are injected on the tablet's
-  monitor (`--no-touch` on the host turns this off).
+  monitor (`--no-touch` on the host turns this off). After a touch, the mouse cursor goes back to
+  where it was.
+- **Shortcut dock:** a translucent circle you can drag anywhere. Tap it for cut, copy, paste,
+  undo, redo, Task view and play/pause (the icon follows what's playing on the PC). Keys go to
+  the active window, as from a keyboard. Hide it with *Shortcut dock* in the settings.
+- **Volume keys** change the PC's volume while the app is streaming; the tablet's own volume
+  stays as it was. Turning it all the way down mutes the PC.
 - **Rotate** the tablet and the Windows display follows, like a pivoting monitor: Windows switches
   it to portrait and back, and windows reflow. The app follows the tablet's auto-rotate setting.
   Frames stay landscape on the wire and the tablet's compositor rotates them, so portrait costs
@@ -448,4 +454,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 ## License
 [MIT](LICENSE), except `driver/`, which is derived from Microsoft's IddCx sample and is
 licensed under [MS-PL](driver/LICENSE). See
-[driver/THIRD_PARTY_NOTICES.md](driver/THIRD_PARTY_NOTICES.md).
+[driver/THIRD_PARTY_NOTICES.md](driver/THIRD_PARTY_NOTICES.md). The app's dock icons come from Lucide (ISC); see
+[android/THIRD_PARTY_NOTICES.md](android/THIRD_PARTY_NOTICES.md).

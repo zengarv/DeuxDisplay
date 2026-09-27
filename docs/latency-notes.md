@@ -131,6 +131,22 @@ Sync), 2026-09-27. Averages over two-second windows (9 per single-device run, 4 
 - Two devices don't slow each other down on this iGPU. The Pad Go's encode even got faster
   (12.4 → 8.3 ms), most likely because the GPU clocks higher with more load.
 
+## Shortcut dock and media state
+
+Client-reported latency over USB, OnePlus Pad Go 2408x1720 HEVC, dev PC, 2026-09-27. Normal
+desktop use (mostly static, not the steady-animation test above), so treat it as a regression check
+only. Medians of the two-second windows' p50 values over one session each.
+
+| Run | Frames | present→received | present→decoded |
+|-----|-------:|-----------------:|----------------:|
+| Before the dock (0.1.1) | 316 | 24.5 ms | 65.5 ms |
+| Before the dock (0.1.1), second session | 97 | 22.5 ms | 69.2 ms |
+| With the dock shown | 273 | 21.1 ms | 62.8 ms |
+
+- No change beyond noise, as expected. The dock is a view above the video surface that only
+  redraws when touched. `ACTION` and `MEDIA_STATE` are a few bytes each, and `MEDIA_STATE` goes
+  out only on a change (polled every 250 ms on its own thread).
+
 ### Open leads for M4
 - Encode takes ~20 ms at 6.4 MP even on the fastest preset, with no input wait. Next suspects:
   GPU clock ramp-up under bursty load, MFT internal async depth
