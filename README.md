@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/logo.svg" alt="DeuxDisplay logo" width="128"></p>
+
 # DeuxDisplay
 
 Use an Android tablet as a **low-latency extended monitor** for Windows 11, over a USB-C cable

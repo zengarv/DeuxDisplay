@@ -1,0 +1,7 @@
+<!-- The app icon (android/app/src/main/res/drawable/ic_launcher.xml) as SVG. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108">
+  <rect width="108" height="108" rx="24" fill="#1F2937"/>
+  <rect x="22" y="34" width="40" height="28" fill="#60A5FA"/>
+  <rect x="66" y="40" width="20" height="28" fill="#34D399"/>
+  <rect x="36" y="66" width="12" height="4" fill="#9CA3AF"/>
+</svg>
