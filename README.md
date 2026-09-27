@@ -167,13 +167,22 @@ flowchart LR
 ### Picking the stream format
 
 The app lists only modes the device can show: the panel's own sizes and refresh rates, plus
-scaled-down sizes the hardware decoder accepts. Press **Back** while streaming to open the picker.
+scaled-down sizes the hardware decoder accepts, and a 30 fps stream-only rate. Press **Back**
+while streaming to open the picker. Choices made there override the host's `--max-stream-size`,
+`--max-fps` and `--codec` options.
+
+**Codec** is *Auto*, *H.264* or *HEVC (H.265)* (HEVC is listed only if the tablet has a hardware
+HEVC decoder). The pick travels in HELLO's `codecs` bitmask: the app advertises only the chosen
+codec. *Auto* offers HEVC only at sizes the HEVC decoder is rated for, and the host then prefers
+it; an explicit HEVC pick is used at any size. HEVC gives sharper text per bit and more decoder
+headroom, but on the reference tablet it doesn't lower latency (see
+[docs/latency-notes.md](docs/latency-notes.md)).
 
 ```mermaid
 flowchart TB
-    A["Display.getSupportedModes()"] --> C["Resolution + frame rate<br/>choices (or Auto)"]
-    B["MediaCodec isSizeSupported()"] --> C
-    C -- "Apply" --> E["Reconnect with HELLO<br/>mode_width / height / refresh"]
+    A["Display.getSupportedModes()"] --> C["Resolution + frame rate + codec<br/>choices (or Auto)"]
+    B["MediaCodec isSizeSupported()<br/>+ hardware HEVC decoder?"] --> C
+    C -- "Apply" --> E["Reconnect with HELLO<br/>mode_width / height / refresh, codecs"]
     E --> F["Host plugs a monitor with<br/>only that mode"]
     F --> G["Windows renders at that mode<br/>host encodes it 1:1"]
     G --> H["Tablet scales to its panel"]
@@ -320,8 +329,11 @@ On the tablet:
 - **Touch** controls the PC: tap, drag, and multi-finger gestures are injected on the tablet's
   monitor (`--no-touch` on the host turns this off).
 - **Back** opens the settings: resolution and frame rate from what the device supports (or
-  *Auto*), the connection (USB or Wi-Fi), and a field for typing a pairing code. Applying
-  reconnects, and the monitor comes back in the new mode.
+  *Auto*), the codec (*Auto*, H.264 or HEVC), the connection (USB or Wi-Fi), and a field for
+  typing a pairing code. Applying reconnects, and the monitor comes back in the new mode. The
+  choices are remembered.
+- For the lowest latency on the reference tablet, stay at **60 fps** or below: its decoder
+  manages ~60 fps at native size, and extra frames queue up.
 
 ## Contributing
 See [CONTRIBUTING.md](CONTRIBUTING.md).

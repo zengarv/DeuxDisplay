@@ -80,8 +80,11 @@ Input passthrough is the stretch milestone M5.
 - [x] Frame pacing (`--max-fps`, default 60), stream scaling (`--max-stream-size`), HEVC
       (`--codec auto|h264|hevc`), adb-reverse watchdog in `run.ps1`
 - [x] Diagnosed the MediaTek decoder's fixed ~2-frame hold (see docs/latency-notes.md)
-- [x] Stream resolution/frame-rate picker in the app (panel modes + decodable scaled sizes);
-      sent in `HELLO`, host plugs and streams exactly that mode (unverified on hardware)
+- [x] Stream resolution/frame-rate picker in the app (panel modes + decodable scaled sizes, plus a
+      30 fps stream-only rate); sent in `HELLO`, host plugs and streams exactly that mode
+      (verified on the Pad Go: requested 2408×1720 @ 60 streamed as picked)
+- [x] Codec picker (Auto / H.264 / HEVC) via HELLO's `codecs` bitmask; Auto keeps HEVC within the
+      decoder's rated sizes, an explicit HEVC pick is honored at any size
 - [ ] Client-side cursor overlay via `CURSOR` messages (biggest perceived-latency win left)
 - [ ] Keep the encoder's GPU clocks up between bursty frames
 - [ ] Tune encoder, TCP, `ADB_BURST_MODE`, decoder flags; record in `docs/latency-notes.md`
@@ -126,4 +129,8 @@ Plug the tablet in with the app open and it becomes a monitor, like a cable to a
       display; host-side contact tracking lifts lost/vanished contacts; `--no-touch` to disable
       (unit tested; not yet verified on hardware)
 - [ ] Verify touch on the Pad Go + Windows (taps, drags, pinch; long holds with no movement)
+- [ ] Fix held touches: Windows cancels an injected contact that isn't refreshed for ~100 ms
+      (`InjectTouchInput` → `ERROR_TIMEOUT` 1460, then 87 for every later update), and Android
+      sends nothing while a finger is still. Re-inject active contacts every ~50 ms on the host,
+      and treat a cancelled contact as a new down (seen on the Pad Go, 2026-09-27)
 - [ ] Pen (pressure/tilt/hover) via synthetic pointer devices (`PT_PEN`)
