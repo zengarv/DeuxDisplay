@@ -241,11 +241,11 @@ fun parseTouchFrame(payload: ByteArray): List<TouchContact> = parsing(payload) {
     }
 }
 
-/** ACTION values: shortcuts from the dock and the volume keys. The host picks the keys. */
+/**
+ * ACTION values: shortcuts from the dock and the volume keys. The host picks the keys. 1-3 (cut,
+ * copy, paste in 0.2.1) are retired: Windows touch already offers them.
+ */
 object DockAction {
-    const val CUT: Int = 1
-    const val COPY: Int = 2
-    const val PASTE: Int = 3
     const val UNDO: Int = 4
     const val REDO: Int = 5
     const val TASK_VIEW: Int = 6

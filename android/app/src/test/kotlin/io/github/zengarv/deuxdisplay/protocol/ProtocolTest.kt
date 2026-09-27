@@ -132,7 +132,7 @@ class ProtocolTest {
         val state = MediaState(Playback.PLAYING, muted = true, volumePercent = 45)
         assertArrayEquals(byteArrayOf(2, 1, 45, 0), state.serialize())
         assertEquals(state, MediaState.parse(state.serialize()))
-        assertArrayEquals(byteArrayOf(DockAction.COPY.toByte()), serializeAction(DockAction.COPY))
+        assertArrayEquals(byteArrayOf(4), serializeAction(DockAction.UNDO))
     }
 
     @Test(expected = ProtocolException::class)

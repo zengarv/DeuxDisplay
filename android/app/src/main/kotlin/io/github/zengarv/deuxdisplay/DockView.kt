@@ -56,9 +56,6 @@ class DockView(
     private val handle = button(R.drawable.dock_handle, R.string.dock_toggle) { toggle() }
     private val playPause = button(R.drawable.dock_play, R.string.dock_play_pause) { onPlayPause() }
     private val shortcuts = listOf(
-        button(R.drawable.dock_cut, R.string.dock_cut) { onAction(DockAction.CUT) },
-        button(R.drawable.dock_copy, R.string.dock_copy) { onAction(DockAction.COPY) },
-        button(R.drawable.dock_paste, R.string.dock_paste) { onAction(DockAction.PASTE) },
         button(R.drawable.dock_undo, R.string.dock_undo) { onAction(DockAction.UNDO) },
         button(R.drawable.dock_redo, R.string.dock_redo) { onAction(DockAction.REDO) },
         button(R.drawable.dock_task_view, R.string.dock_task_view) { onAction(DockAction.TASK_VIEW) },

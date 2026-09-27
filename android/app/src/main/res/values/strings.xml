@@ -23,9 +23,6 @@
     <string name="status_not_paired">Wi-Fi isn\'t paired yet.\nConnect once over USB, or press Back and enter the pairing code.</string>
     <string name="setting_dock">Shortcut dock</string>
     <string name="dock_toggle">Shortcuts</string>
-    <string name="dock_cut">Cut</string>
-    <string name="dock_copy">Copy</string>
-    <string name="dock_paste">Paste</string>
     <string name="dock_undo">Undo</string>
     <string name="dock_redo">Redo</string>
     <string name="dock_task_view">Task view</string>

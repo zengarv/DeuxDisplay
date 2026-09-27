@@ -23,12 +23,6 @@ Keys KeysFor(protocol::Action action)
     using protocol::Action;
     switch (action)
     {
-    case Action::Cut:
-        return {VK_CONTROL, 'X'};
-    case Action::Copy:
-        return {VK_CONTROL, 'C'};
-    case Action::Paste:
-        return {VK_CONTROL, 'V'};
     case Action::Undo:
         return {VK_CONTROL, 'Z'};
     case Action::Redo:

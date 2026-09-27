@@ -139,11 +139,9 @@ struct TouchFrame
 
 // ACTION payload: a shortcut from the client's dock. The host picks the keys, so clients don't
 // depend on Windows key codes.
+// Values 1-3 (cut, copy, paste in 0.2.1) are retired: Windows touch already offers them.
 enum class Action : uint8_t
 {
-    Cut = 1,
-    Copy = 2,
-    Paste = 3,
     Undo = 4,
     Redo = 5,
     TaskView = 6,

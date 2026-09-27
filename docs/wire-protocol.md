@@ -212,9 +212,7 @@ decides how to carry it out, so clients don't depend on Windows key codes.
 
 | Value | Action       | Host does                                         |
 |------:|--------------|---------------------------------------------------|
-| 1     | Cut          | Ctrl+X                                            |
-| 2     | Copy         | Ctrl+C                                            |
-| 3     | Paste        | Ctrl+V                                            |
+| 1–3   | *Retired*    | Ignored. Cut, copy and paste in 0.2.1; Windows touch already offers them |
 | 4     | Undo         | Ctrl+Z                                            |
 | 5     | Redo         | Ctrl+Y                                            |
 | 6     | Task view    | Win+Tab                                           |

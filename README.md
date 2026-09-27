@@ -357,10 +357,16 @@ monitor cable:
 
 Plugging in with the app closed does nothing: the tablet just charges.
 
-**App stuck on "waiting for DeuxDisplay on your PC"?** The agent isn't running (no DeuxDisplay
-tray icon), for example after choosing **Exit** in its menu. Start it again by running
-`host\x64\Release\DeuxDisplayAgent.exe` (double-click it, or re-run `install-autostart.ps1`), or
-by signing out and back in.
+**App stuck on "waiting for DeuxDisplay on your PC"?** In order of likelihood:
+- **The agent isn't running** (no DeuxDisplay tray icon), for example after choosing **Exit** in
+  its menu. Start it again by running `host\x64\Release\DeuxDisplayAgent.exe` (double-click it,
+  or re-run `install-autostart.ps1`), or by signing out and back in.
+- **The USB mode.** After a PC restart the tablet may not connect in *Charging only* mode. Pull
+  down the notification shade, tap the USB notification and switch to **USB tethering** (seen on
+  a OnePlus Pad Go).
+- **Upgrading from 0.2.1 or older, after a restart:** the log shows `plugging the virtual monitor
+  failed 0x80070490`. Those versions installed a device that Windows drops at reboot. Run
+  `.\scripts\install-driver.ps1` again (elevated, once) to replace it with one that stays.
 
 **From a console** (to try options or watch the log live): exit the agent from the tray first,
 then:
@@ -368,8 +374,9 @@ then:
 .\scripts\run.ps1 -Transport Usb    # Ctrl+C to stop
 ```
 
-- **Any USB mode works:** *Charging only* (Android's default), *File transfer* and so on. adb runs
-  alongside all of them. Switching modes briefly drops the display, and it comes back by itself.
+- **USB mode:** adb runs alongside *Charging only* (Android's default), *File transfer* and so on,
+  but after a PC restart some tablets only connect in **USB tethering** (see above). Switching
+  modes briefly drops the display, and it comes back by itself.
 - The host re-creates the adb tunnel whenever the tablet (re)appears: cable re-plugged, USB mode
   switched, or the adb server restarted by another tool. No need to run `adb reverse` yourself.
 - **Several devices at once:** plug in up to four tablets or phones (app open on each) and each
@@ -432,8 +439,9 @@ ffplay out.h264
 - **Touch** controls the PC: tap, drag, and multi-finger gestures are injected on the tablet's
   monitor (`--no-touch` on the host turns this off). After a touch, the mouse cursor goes back to
   where it was.
-- **Shortcut dock:** a translucent circle you can drag anywhere. Tap it for cut, copy, paste,
-  undo, redo, Task view and play/pause (the icon follows what's playing on the PC). Keys go to
+- **Shortcut dock:** a translucent circle you can drag anywhere. Tap it for undo, redo, Task
+  view and play/pause (the icon follows what's playing on the PC). For cut, copy and paste, use
+  Windows' own touch gestures (press and hold for the context menu). Keys go to
   the active window, as from a keyboard. Hide it with *Shortcut dock* in the settings.
 - **Volume keys** change the PC's volume while the app is streaming; the tablet's own volume
   stays as it was. Turning it all the way down mutes the PC.

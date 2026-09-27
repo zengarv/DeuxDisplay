@@ -119,10 +119,12 @@ void OrientationRoundTrip()
 
 void ActionAndMediaStateRoundTrip()
 {
-    CHECK(ParseAction(SerializeAction(Action::Cut)) == Action::Cut);
+    CHECK(ParseAction(SerializeAction(Action::Undo)) == Action::Undo);
     CHECK(ParseAction(SerializeAction(Action::VolumeDown)) == Action::VolumeDown);
     const std::array<uint8_t, 1> unknown{0x7F};
     CHECK(!ParseAction(unknown).has_value());
+    const std::array<uint8_t, 1> retiredCopy{2}; // 0.2.1 clients may still send it
+    CHECK(!ParseAction(retiredCopy).has_value());
     CHECK(!ParseAction({}).has_value());
 
     const MediaState state{Playback::Playing, true, 45};

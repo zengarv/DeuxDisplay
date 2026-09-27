@@ -23,9 +23,6 @@ $ProgressPreference = 'SilentlyContinue'
 
 # Drawable name -> Lucide icon name (https://lucide.dev/icons).
 $Icons = [ordered]@{
-    dock_cut          = 'scissors'
-    dock_copy         = 'copy'
-    dock_paste        = 'clipboard-paste'
     dock_undo         = 'undo-2'
     dock_redo         = 'redo-2'
     dock_task_view    = 'layout-panel-left'

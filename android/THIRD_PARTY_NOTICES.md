@@ -2,7 +2,7 @@
 
 The shortcut dock's icons (`app/src/main/res/drawable/dock_*.xml`) are converted from
 [Lucide](https://lucide.dev) (`lucide-static` 1.48.0) by `scripts/update-dock-icons.ps1`:
-scissors, copy, clipboard-paste, undo-2, redo-2, layout-panel-left, play, pause, layout-grid, x, volume-2, volume-x. Only the file format changed (SVG shapes to Android vector paths, white stroke).
+undo-2, redo-2, layout-panel-left, play, pause, layout-grid, x, volume-2, volume-x. Only the file format changed (SVG shapes to Android vector paths, white stroke).
 Lucide's license follows.
 
 ```

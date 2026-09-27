@@ -244,7 +244,7 @@ std::optional<Action> ParseAction(std::span<const uint8_t> payload)
 {
     Reader r(payload);
     uint8_t action = 0;
-    if (!r.Get(action) || action < static_cast<uint8_t>(Action::Cut) ||
+    if (!r.Get(action) || action < static_cast<uint8_t>(Action::Undo) ||
         action > static_cast<uint8_t>(Action::VolumeDown))
     {
         return std::nullopt;
