@@ -3,6 +3,11 @@
 DeuxDisplay turns an Android device into an extended (not mirrored) Windows 11 display over
 a wired USB connection, optimised for end-to-end latency.
 
+New here? Start with [understanding-deuxdisplay.md](understanding-deuxdisplay.md) (intuition,
+then host and app walkthroughs). Driver deep dive:
+[windows-driver-internals.md](windows-driver-internals.md). Other host OSes:
+[porting-linux-macos.md](porting-linux-macos.md).
+
 ```
  Windows 11 PC                                                Android tablet
 ┌──────────────────────────────────────────────┐            ┌──────────────────────────────┐
