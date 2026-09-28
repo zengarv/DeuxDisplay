@@ -64,9 +64,10 @@ object StreamModes {
         options(panelModes(activity)) { w, h -> VideoDecoder.supportsSize(MediaFormat.MIMETYPE_VIDEO_AVC, w, h) }
 
     /**
-     * Every panel size (the device shows these already), plus scaled-down copies of the largest
-     * one that [decodes] accepts. Scaled sizes keep the largest size's refresh rates. Sizes are
-     * landscape and even; the list is ordered largest first.
+     * Every panel size, plus scaled-down copies of the largest one, keeping those [decodes]
+     * accepts: old decoders can't always take the panel's own size (the 2013 Nexus 7's stops at
+     * 1920x1088 on a 1920x1200 panel). Scaled sizes keep the largest size's refresh rates. Sizes
+     * are landscape and even; the list is ordered largest first.
      */
     fun options(panel: List<PanelMode>, decodes: (width: Int, height: Int) -> Boolean): List<ModeOption> {
         val rates = LinkedHashMap<Pair<Int, Int>, MutableSet<Int>>()
@@ -76,13 +77,14 @@ object StreamModes {
             if (fits(size) && hz in RATE_RANGE) rates.getOrPut(size) { mutableSetOf() }.add(hz)
         }
         rates.values.forEach { it.addAll(EXTRA_STREAM_RATES) }
-        val native = rates.map { (size, hz) -> ModeOption(size.first, size.second, hz.sortedDescending(), true) }
-        val largest = native.maxByOrNull { it.width * it.height } ?: return emptyList()
+        val panelSizes = rates.map { (size, hz) -> ModeOption(size.first, size.second, hz.sortedDescending(), true) }
+        val largest = panelSizes.maxByOrNull { it.width * it.height } ?: return emptyList()
+        val native = panelSizes.filter { decodes(it.width, it.height) }
         val scaled = SCALES
             .map { (num, den) -> landscapeEven(largest.width * num / den, largest.height * num / den) }
             .distinct()
             .filter { size ->
-                fits(size) && native.none { it.width == size.first && it.height == size.second } &&
+                fits(size) && panelSizes.none { it.width == size.first && it.height == size.second } &&
                     decodes(size.first, size.second)
             }
             .map { (w, h) -> ModeOption(w, h, largest.refreshRates, native = false) }

@@ -47,23 +47,32 @@ object DisplayInfo {
             xdpi = ydpi.also { ydpi = xdpi }
         }
 
+        // Auto means the panel's size, unless the decoder can't take it (options leaves it out):
+        // then the largest size it can.
+        val nativeListed = options.any { it.native && it.width == width and 1.inv() && it.height == height and 1.inv() }
+        val picked = if (mode.hasSize || nativeListed || options.isEmpty()) {
+            mode
+        } else {
+            mode.copy(width = options.first().width, height = options.first().height)
+        }
+
         // Whether HEVC is rated for the picked size (native if none picked); see StreamMode.codecMask.
         val hevcDecoder = VideoDecoder.hasHardwareDecoder(MediaFormat.MIMETYPE_VIDEO_HEVC)
         val hevcRated = hevcDecoder &&
-            (!mode.hasSize || VideoDecoder.supportsSize(MediaFormat.MIMETYPE_VIDEO_HEVC, mode.width, mode.height))
+            (!picked.hasSize || VideoDecoder.supportsSize(MediaFormat.MIMETYPE_VIDEO_HEVC, picked.width, picked.height))
 
         return Hello(
             widthPx = width,
             heightPx = height,
             densityDpi = metrics.densityDpi,
             refreshMilliHz = (refreshHz * 1000).roundToInt(),
-            codecs = mode.codecMask(hevcDecoder, hevcRated),
+            codecs = picked.codecMask(hevcDecoder, hevcRated),
             deviceName = "${Build.MANUFACTURER} ${Build.MODEL}",
             xdpiMilli = (xdpi * 1000).roundToInt(),
             ydpiMilli = (ydpi * 1000).roundToInt(),
-            modeWidthPx = if (mode.hasSize) mode.width else 0,
-            modeHeightPx = if (mode.hasSize) mode.height else 0,
-            modeRefreshMilliHz = mode.refreshHz * 1000,
+            modeWidthPx = if (picked.hasSize) picked.width else 0,
+            modeHeightPx = if (picked.hasSize) picked.height else 0,
+            modeRefreshMilliHz = picked.refreshHz * 1000,
             sizes = options.map { it.width to it.height },
             rates = options.flatMap { it.refreshRates }.distinct().sortedDescending(),
         )

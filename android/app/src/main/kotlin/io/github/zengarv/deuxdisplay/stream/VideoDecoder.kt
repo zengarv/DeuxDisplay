@@ -11,6 +11,7 @@ import android.os.Process
 import android.util.Log
 import android.view.Surface
 import io.github.zengarv.deuxdisplay.protocol.Protocol
+import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -71,7 +72,13 @@ class VideoDecoder(
         val choice = if (forcedDecoder != null) DecoderChoice(forcedDecoder, false) else pickDecoder(mime)
         codecName = choice.name
         codec = MediaCodec.createByCodecName(choice.name)
-        lowLatency = configure(surface, width, height, choice)
+        lowLatency = try {
+            configure(surface, width, height, choice)
+        } catch (e: RuntimeException) {
+            codec.release()
+            callbackThread.quitSafely()
+            throw e
+        }
         codec.setOnFrameRenderedListener({ _, ptsUs, nanoTime ->
             val t = timings.remove(ptsUs) ?: return@setOnFrameRenderedListener
             // nanoTime should be System.nanoTime-based, but some vendor decoders (MediaTek C2 on
@@ -282,13 +289,39 @@ class VideoDecoder(
                     info.supportedTypes.any { it.equals(mime, ignoreCase = true) }
             }
 
-        /** True if the decoder we'd pick for [mime] accepts a [width]x[height] stream. */
+        /**
+         * True if the decoder we'd pick for [mime] accepts a [width]x[height] stream. Sizes it
+         * claims are also tried for real: old OMX decoders overstate their limits (the 2013
+         * Nexus 7 claims 1920x1920 but rejects anything over 1920x1088).
+         */
         fun supportsSize(mime: String, width: Int, height: Int): Boolean {
             val name = runCatching { pickDecoder(mime).name }.getOrNull() ?: return false
             val info = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.firstOrNull { it.name == name }
                 ?: return false
-            return info.getCapabilitiesForType(mime).videoCapabilities?.isSizeSupported(width, height) == true
+            return info.getCapabilitiesForType(mime).videoCapabilities?.isSizeSupported(width, height) == true &&
+                configures(name, mime, width, height)
         }
+
+        private val configurable = ConcurrentHashMap<String, Boolean>()
+
+        private fun configures(name: String, mime: String, width: Int, height: Int): Boolean =
+            configurable.getOrPut("$name $mime ${width}x$height") {
+                val codec = try {
+                    MediaCodec.createByCodecName(name)
+                } catch (e: IOException) {
+                    Log.w(TAG, "can't create $name to probe ${width}x$height", e)
+                    return false
+                }
+                try {
+                    codec.configure(MediaFormat.createVideoFormat(mime, width, height), null, null, 0)
+                    true
+                } catch (e: RuntimeException) {
+                    Log.i(TAG, "$name rejects ${width}x$height ($mime): ${e.message}")
+                    false
+                } finally {
+                    codec.release()
+                }
+            }
 
         /** "As fast as possible": decoders treat rates beyond their limit as their maximum. */
         const val DEFAULT_OPERATING_RATE = Short.MAX_VALUE.toInt()

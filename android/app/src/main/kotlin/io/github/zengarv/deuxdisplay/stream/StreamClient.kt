@@ -65,6 +65,9 @@ class StreamClient(
     /** The host closed a Wi-Fi session during authentication: the pairing code is wrong. */
     private class RejectedException : Exception()
 
+    /** The decoder refused the host's stream format. */
+    private class DecoderException(val width: Int, val height: Int, cause: Throwable) : Exception(cause)
+
     fun interface Listener {
         /** A human-readable status, or null once video is streaming. Called on the network thread. */
         fun onStatus(status: String?)
@@ -178,6 +181,12 @@ class StreamClient(
                 Log.i(TAG, "session ended: ${e.message}")
             } catch (e: ProtocolException) {
                 Log.w(TAG, "protocol error: ${e.message}")
+            } catch (e: DecoderException) {
+                Log.w(TAG, "decoder rejected ${e.width}x${e.height}", e.cause)
+                listener.onStatus(
+                    "This tablet can't decode ${e.width}x${e.height}.\nPick a lower resolution in settings.",
+                )
+                retryDelayMs = REJECTED_RETRY_DELAY_MS
             } catch (e: RejectedException) {
                 Log.w(TAG, "host rejected the pairing code")
                 listener.onStatus("Your PC rejected this tablet's pairing code.\nConnect once over USB to pair again.")
@@ -252,39 +261,44 @@ class StreamClient(
                             val config = Config.parse(frameBuffer.copyOf(header.length))
                             Log.i(TAG, "CONFIG $config")
                             decoder?.release()
+                            decoder = null
                             val mime = when (config.codec) {
                                 Codec.HEVC -> MediaFormat.MIMETYPE_VIDEO_HEVC
                                 Codec.H264 -> MediaFormat.MIMETYPE_VIDEO_AVC
                                 Codec.VP9 -> MediaFormat.MIMETYPE_VIDEO_VP9
                             }
-                            decoder = VideoDecoder(
-                                if (decodeWithoutSurface) null else surface,
-                                mime,
-                                config.widthPx,
-                                config.heightPx,
-                                onNeedKeyframe = {
-                                    stats?.onKeyframeRequested()
-                                    send(MessageType.REQUEST_KEYFRAME, 0, ByteArray(0))
-                                },
-                                onFrameTiming = { pts, received, decoded, rendered ->
-                                    stats?.onFrameShown(pts, clock.toHost(received), received, decoded, rendered)
-                                    if (clock.valid) {
-                                        val stats = FrameStats(
-                                            pts,
-                                            clock.toHost(received),
-                                            clock.toHost(decoded),
-                                            clock.toHost(rendered),
-                                        )
-                                        send(MessageType.FRAME_STATS, 0, stats.serialize())
-                                    }
-                                },
-                                forcedDecoder = forcedDecoder,
-                                rotationDegrees = config.rotationDegrees,
-                                fullRange = config.fullRange,
-                                stats = stats,
-                                operatingRate = operatingRate,
-                                extraKeys = extraDecoderKeys,
-                            ).also { stats?.onConfig(config, it.codecName, it.lowLatency) }
+                            decoder = try {
+                                VideoDecoder(
+                                    if (decodeWithoutSurface) null else surface,
+                                    mime,
+                                    config.widthPx,
+                                    config.heightPx,
+                                    onNeedKeyframe = {
+                                        stats?.onKeyframeRequested()
+                                        send(MessageType.REQUEST_KEYFRAME, 0, ByteArray(0))
+                                    },
+                                    onFrameTiming = { pts, received, decoded, rendered ->
+                                        stats?.onFrameShown(pts, clock.toHost(received), received, decoded, rendered)
+                                        if (clock.valid) {
+                                            val stats = FrameStats(
+                                                pts,
+                                                clock.toHost(received),
+                                                clock.toHost(decoded),
+                                                clock.toHost(rendered),
+                                            )
+                                            send(MessageType.FRAME_STATS, 0, stats.serialize())
+                                        }
+                                    },
+                                    forcedDecoder = forcedDecoder,
+                                    rotationDegrees = config.rotationDegrees,
+                                    fullRange = config.fullRange,
+                                    stats = stats,
+                                    operatingRate = operatingRate,
+                                    extraKeys = extraDecoderKeys,
+                                )
+                            } catch (e: RuntimeException) {
+                                throw DecoderException(config.widthPx, config.heightPx, e)
+                            }.also { stats?.onConfig(config, it.codecName, it.lowLatency) }
                             onConfig?.invoke(config)
                             listener.onStatus(null)
                         }

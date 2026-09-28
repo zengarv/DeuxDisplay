@@ -45,6 +45,14 @@ class StreamModesTest {
     }
 
     @Test
+    fun panelSizeTheDecoderRejectsIsLeftOut() {
+        // Nexus 7 (2013): 1920x1200 panel, decoder limited to 1920x1088.
+        val options = StreamModes.options(listOf(PanelMode(1200, 1920, 60f))) { _, h -> h <= 1088 }
+        assertEquals(listOf(1440 to 900, 1280 to 800, 960 to 600), options.map { it.width to it.height })
+        assertTrue(options.all { !it.native && it.refreshRates == listOf(60, 30) })
+    }
+
+    @Test
     fun dropsModesOutsideDriverLimits() {
         val options = StreamModes.options(listOf(PanelMode(1280, 800, 60f), PanelMode(1280, 800, 300f))) { _, _ -> true }
         // 300 Hz is out of range; 1/2 of 1280x800 (640x400) is below 640x480.
