@@ -33,6 +33,7 @@ class VideoDecoder(
     // Degrees clockwise to rotate frames on screen (CONFIG rotation). Applied by the compositor
     // when it shows the surface, so it costs nothing in the decode path.
     private val rotationDegrees: Int = 0,
+    private val stats: StreamStats? = null, // debug overlay counters
 ) {
     /** Per-frame timestamps on the client clock (µs, System.nanoTime based); 0 = unknown. */
     fun interface FrameTimingListener {
@@ -81,6 +82,7 @@ class VideoDecoder(
         val isConfig = flags and Protocol.FLAG_CODEC_CONFIG != 0
         val isKey = flags and Protocol.FLAG_KEYFRAME != 0
         if (awaitingKeyframe && !isConfig && !isKey) {
+            stats?.onFrameSkipped()
             return // decoding a P-frame without its reference would only show garbage
         }
         try {
@@ -146,7 +148,9 @@ class VideoDecoder(
                 if (index >= 0) {
                     timings[info.presentationTimeUs]?.set(1, System.nanoTime() / 1000)
                     // Frames still inside the decoder when this one came out (diagnostic).
-                    inFlightSum += inFlight.getAndDecrement()
+                    val queued = inFlight.getAndDecrement()
+                    inFlightSum += queued
+                    stats?.onDecoded(queued)
                     if (++outputs % 120 == 0L) {
                         Log.i(TAG, "avg frames in decoder at output: ${"%.2f".format(inFlightSum / 120.0)}")
                         inFlightSum = 0

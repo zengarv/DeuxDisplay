@@ -55,6 +55,7 @@ class StreamClient(
     private val onMediaState: ((MediaState) -> Unit)? = null,
     // Stream parameters for this session (network thread), e.g. to match the panel's refresh rate.
     private val onConfig: ((Config) -> Unit)? = null,
+    private val stats: StreamStats? = null, // debug overlay counters
 ) {
     /** The host closed a Wi-Fi session during authentication: the pairing code is wrong. */
     private class RejectedException : Exception()
@@ -179,6 +180,7 @@ class StreamClient(
             val input = DataInputStream(BufferedInputStream(s.getInputStream(), 1 shl 16))
             output = s.getOutputStream()
             if (wifi != null) authenticate(input, authKey ?: throw RejectedException())
+            stats?.onSession(if (wifi == null) "USB" else "Wi-Fi ${wifi.ssid}")
             send(MessageType.HELLO, 0, hello.serialize())
             // Always state the orientation, so a display left in portrait by an earlier session
             // returns to landscape if the tablet is landscape now.
@@ -200,8 +202,10 @@ class StreamClient(
                     val receivedUs = nowMicros()
 
                     when (header.type) {
-                        MessageType.VIDEO_FRAME ->
+                        MessageType.VIDEO_FRAME -> {
+                            stats?.onVideoFrame(header.length, header.flags)
                             decoder?.submit(frameBuffer, header.length, header.flags, header.timestamp, receivedUs)
+                        }
                         MessageType.CONFIG -> {
                             val config = Config.parse(frameBuffer.copyOf(header.length))
                             Log.i(TAG, "CONFIG $config")
@@ -215,8 +219,12 @@ class StreamClient(
                                 mime,
                                 config.widthPx,
                                 config.heightPx,
-                                onNeedKeyframe = { send(MessageType.REQUEST_KEYFRAME, 0, ByteArray(0)) },
+                                onNeedKeyframe = {
+                                    stats?.onKeyframeRequested()
+                                    send(MessageType.REQUEST_KEYFRAME, 0, ByteArray(0))
+                                },
                                 onFrameTiming = { pts, received, decoded, rendered ->
+                                    stats?.onFrameShown(pts, clock.toHost(received), received, decoded, rendered)
                                     if (clock.valid) {
                                         val stats = FrameStats(
                                             pts,
@@ -229,7 +237,8 @@ class StreamClient(
                                 },
                                 forcedDecoder = forcedDecoder,
                                 rotationDegrees = config.rotationDegrees,
-                            )
+                                stats = stats,
+                            ).also { stats?.onConfig(config, it.codecName, it.lowLatency) }
                             onConfig?.invoke(config)
                             listener.onStatus(null)
                         }
@@ -240,6 +249,7 @@ class StreamClient(
                         MessageType.PONG -> {
                             val pong = Pong.parse(frameBuffer.copyOf(header.length))
                             clock.onPong(pong.pingTimestamp, receivedUs, header.timestamp)
+                            stats?.onPong(receivedUs - pong.pingTimestamp)
                         }
                         MessageType.PAIRING -> if (wifi == null) {
                             val pairing = PairingInfo.parse(frameBuffer.copyOf(header.length))

@@ -39,6 +39,7 @@ import io.github.zengarv.deuxdisplay.stream.StreamClient
 import io.github.zengarv.deuxdisplay.stream.StreamCodec
 import io.github.zengarv.deuxdisplay.stream.StreamMode
 import io.github.zengarv.deuxdisplay.stream.StreamModes
+import io.github.zengarv.deuxdisplay.stream.StreamStats
 import io.github.zengarv.deuxdisplay.stream.TouchInput
 import io.github.zengarv.deuxdisplay.stream.VideoDecoder
 import io.github.zengarv.deuxdisplay.stream.WifiLink
@@ -79,6 +80,11 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
     // Frame rate of the running stream (CONFIG), which the panel follows when the rate is on Auto.
     private var streamHz = 0
 
+    // Debug stats overlay; counters are only kept while it's shown.
+    private val stats = StreamStats()
+    private lateinit var statsOverlay: StatsOverlay
+    private var statsEnabled = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -102,6 +108,8 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
         dockEnabled = getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(KEY_DOCK, true)
         dock = DockView(this, getSharedPreferences(DOCK_PREFS, MODE_PRIVATE)) { client?.sendAction(it) }
         volumeIndicator = VolumeIndicator(this)
+        statsEnabled = getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(KEY_STATS, false)
+        statsOverlay = StatsOverlay(this, stats)
         settings = buildSettings()
 
         setContentView(
@@ -118,6 +126,11 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
                     FrameLayout.LayoutParams.WRAP_CONTENT,
                     Gravity.TOP or Gravity.CENTER_HORIZONTAL,
                 ).apply { topMargin = dp(24) })
+                addView(statsOverlay, FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    Gravity.TOP or Gravity.END,
+                ).apply { setMargins(dp(12), dp(12), dp(12), dp(12)) })
                 addView(status, FrameLayout.LayoutParams(
                     FrameLayout.LayoutParams.MATCH_PARENT,
                     FrameLayout.LayoutParams.MATCH_PARENT,
@@ -247,6 +260,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
             onPaired = ::onPaired,
             onMediaState = ::onMediaState,
             onConfig = ::onStreamConfig,
+            stats = stats,
             decodeWithoutSurface = noSurface,
             forcedDecoder = decoder,
         ).also {
@@ -365,6 +379,15 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
             }
         }
 
+        val statsSwitch = Switch(this).apply {
+            isChecked = statsEnabled
+            setOnCheckedChangeListener { _, checked ->
+                statsEnabled = checked
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(KEY_STATS, checked).apply()
+                updateStatsVisibility()
+            }
+        }
+
         val apply = Button(this).apply {
             setText(R.string.setting_apply)
             setOnClickListener { applySettings() }
@@ -383,6 +406,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
             addView(settingRow(R.string.setting_codec, codecSpinner))
             addView(settingRow(R.string.setting_connection, connectionSpinner))
             addView(settingRow(R.string.setting_dock, dockSwitch))
+            addView(settingRow(R.string.setting_stats, statsSwitch))
             if (wifiSupported) {
                 addView(pairingLabel)
                 addView(codeField)
@@ -471,6 +495,11 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
     private fun updateSettingsVisibility() {
         settings.visibility = if (!streaming || settingsOpened) View.VISIBLE else View.GONE
         updateDockVisibility()
+        updateStatsVisibility()
+    }
+
+    private fun updateStatsVisibility() {
+        statsOverlay.setShown(statsEnabled && streaming)
     }
 
     private fun updateDockVisibility() {
@@ -542,6 +571,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
         private const val KEY_WIFI = "wifi"
         private const val KEY_CODEC = "codec"
         private const val KEY_DOCK = "dock"
+        private const val KEY_STATS = "debug_stats"
         private const val DOCK_PREFS = "dock"
 
         /** Joining the PC's network needs WifiNetworkSpecifier (Android 10). */
