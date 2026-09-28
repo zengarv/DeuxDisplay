@@ -24,6 +24,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.Spinner
 import android.widget.Switch
@@ -52,7 +53,7 @@ import kotlin.math.roundToInt
 class MainActivity : Activity(), SurfaceHolder.Callback {
 
     private lateinit var status: TextView
-    private lateinit var settings: LinearLayout
+    private lateinit var settings: View
     private lateinit var resolutionSpinner: Spinner
     private lateinit var refreshSpinner: Spinner
     private lateinit var codecSpinner: Spinner
@@ -148,7 +149,10 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
                     FrameLayout.LayoutParams.WRAP_CONTENT,
                     FrameLayout.LayoutParams.WRAP_CONTENT,
                     Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL,
-                ).apply { bottomMargin = dp(48) })
+                ).apply {
+                    topMargin = dp(24) // taller than the screen (portrait): it scrolls
+                    bottomMargin = dp(48)
+                })
             },
         )
     }
@@ -368,7 +372,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
 
     // --- Stream settings -------------------------------------------------------------------
 
-    private fun buildSettings(): LinearLayout {
+    private fun buildSettings(): View {
         refreshSpinner = Spinner(this)
         updateRefreshChoices(resolutionIndexOf(mode), mode.refreshHz)
 
@@ -401,6 +405,16 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
         connectionSpinner = Spinner(this).apply {
             adapter = spinnerAdapter(connectionLabels)
             setSelection(if (useWifi) 1 else 0)
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                    // Pairing only matters for Wi-Fi.
+                    val wifi = if (position == 1) View.VISIBLE else View.GONE
+                    pairingLabel.visibility = wifi
+                    codeField.visibility = wifi
+                }
+
+                override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+            }
         }
         pairingLabel = TextView(this).apply {
             setTextColor(Color.GRAY)
@@ -467,28 +481,52 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
             setTextColor(Color.GRAY)
         }
 
-        return LinearLayout(this).apply {
+        val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.argb(0xE0, 0x20, 0x20, 0x20))
-            setPadding(dp(24), dp(16), dp(24), dp(16))
+            setPadding(dp(24), dp(8), dp(24), dp(16))
+            addView(sectionHeader(R.string.section_display))
             addView(settingRow(R.string.setting_resolution, resolutionSpinner))
             addView(settingRow(R.string.setting_refresh, refreshSpinner))
+            addView(sectionHeader(R.string.section_quality))
             addView(settingRow(R.string.setting_codec, codecSpinner))
             addView(settingRow(R.string.setting_bitrate, bitrateSlider))
             addView(settingRow(R.string.setting_quality, qualitySlider))
             addView(settingRow(R.string.setting_full_range, fullRangeSwitch))
             addView(settingRow(R.string.setting_sharp_refresh, sharpRefreshSwitch))
+            addView(sectionHeader(R.string.section_connection))
             addView(settingRow(R.string.setting_connection, connectionSpinner))
-            addView(settingRow(R.string.setting_dock, dockSwitch))
-            addView(settingRow(R.string.setting_stats, statsSwitch))
             if (wifiSupported) {
                 addView(pairingLabel)
                 addView(codeField)
             }
-            addView(apply)
+            addView(sectionHeader(R.string.section_app))
+            addView(settingRow(R.string.setting_dock, dockSwitch))
+            addView(settingRow(R.string.setting_stats, statsSwitch))
+            addView(apply, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = dp(12) })
             addView(hint)
         }
+        val wifi = if (useWifi) View.VISIBLE else View.GONE
+        pairingLabel.visibility = wifi
+        codeField.visibility = wifi
+        return ScrollView(this).apply {
+            setBackgroundColor(Color.argb(0xE0, 0x20, 0x20, 0x20))
+            isVerticalScrollBarEnabled = true
+            addView(content)
+        }
     }
+
+    private fun sectionHeader(title: Int): TextView =
+        TextView(this).apply {
+            setText(title)
+            setTextColor(Color.rgb(0x4D, 0xD0, 0xE1)) // the switches' accent
+            textSize = 13f
+            isAllCaps = true
+            letterSpacing = 0.08f
+            setPadding(0, dp(14), 0, dp(2))
+        }
 
     private fun settingRow(label: Int, spinner: View): LinearLayout =
         LinearLayout(this).apply {

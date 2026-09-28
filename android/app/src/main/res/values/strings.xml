@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">DeuxDisplay</string>
+    <string name="section_display">Display</string>
+    <string name="section_quality">Stream quality</string>
+    <string name="section_connection">Connection</string>
+    <string name="section_app">App</string>
     <string name="setting_resolution">Resolution</string>
     <string name="setting_refresh">Frame rate</string>
     <string name="setting_auto">Auto (host default)</string>
@@ -13,7 +17,7 @@
     <string name="codec_vp9">VP9</string>
     <string name="setting_apply">Apply</string>
     <string name="setting_hint">Press Back while streaming to change these. Bitrate, quality, full range and sharp refresh apply right away.</string>
-    <string name="setting_connection">Connection</string>
+    <string name="setting_connection">Link</string>
     <string name="connection_usb">USB</string>
     <string name="connection_wifi">Wi-Fi (direct to PC)</string>
     <string name="pairing_none">Wi-Fi: not paired. Connect once over USB, or type the code from DeuxDisplayHost --pair.</string>

@@ -189,7 +189,7 @@ headroom, but on the reference tablet it doesn't lower latency (see
 [docs/latency-notes.md](docs/latency-notes.md)). VP9 is 4:2:0 like the others (Windows' VP9
 encoder takes no 4:4:4 input), and on the reference tablet it decodes slower than HEVC.
 
-The stream settings also have, applied live without reconnecting:
+The **Stream quality** section also has, applied live without reconnecting:
 
 - **Bitrate**: *Auto* (adaptive, see [docs/wire-protocol.md](docs/wire-protocol.md)) or fixed,
   5–150 Mbps.
@@ -427,7 +427,7 @@ no router is involved. The background agent serves **USB only**, so Wi-Fi runs f
    ```
    The log shows `wifi: network "DeuxDisplay-xxxx" is up` and
    `waiting for a client on USB (...) or Wi-Fi (192.168.137.1:27183)`.
-4. **On the tablet:** press **Back**, set **Connection** to *Wi-Fi (direct to PC)* and tap
+4. **On the tablet:** press **Back**, set **Link** (under *Connection*) to *Wi-Fi (direct to PC)* and tap
    **Apply**. The first time, Android asks to connect to `DeuxDisplay-xxxx`; tap **Connect**.
    The log shows `session: client "..." over Wi-Fi`.
 5. **Unplug the cable** if you like; the display stays.
@@ -445,9 +445,10 @@ Good to know:
 
 ### Tuning
 
-- **On the tablet** (press **Back** while streaming): resolution, frame rate (including 30 fps),
-  codec (Auto / H.264 / HEVC / VP9), bitrate, encoder quality, full-range colour, sharp refresh,
-  connection, shortcut dock and debug stats. Choices are remembered and override the PC defaults.
+- **On the tablet** (press **Back** while streaming), in sections: *Display* (resolution, frame
+  rate including 30 fps), *Stream quality* (codec, bitrate, encoder quality, full-range colour,
+  sharp refresh), *Connection* (USB or Wi-Fi; the pairing code shows only for Wi-Fi) and *App*
+  (shortcut dock, debug stats). Choices are remembered and override the PC defaults.
 - **On the PC:** `run.ps1` takes `-MaxFps`, `-MaxStreamSize 2560x1440`, `-Codec auto|h264|hevc|vp9`,
   `-BitrateKbps`, `-Transport`, and `-Install`. The agent takes the same host options through
   `.\scripts\install-autostart.ps1 -HostArgs '--codec hevc --max-fps 60'`.
