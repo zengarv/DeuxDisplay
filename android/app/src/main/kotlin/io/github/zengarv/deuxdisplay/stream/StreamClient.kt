@@ -53,6 +53,8 @@ class StreamClient(
     private val onPaired: ((PairingInfo) -> Unit)? = null, // USB: the host sent its pairing code
     private val decodeWithoutSurface: Boolean = false, // latency experiment: nothing is displayed
     private val forcedDecoder: String? = null, // debug: MediaCodec component name to use
+    private val operatingRate: Int = VideoDecoder.DEFAULT_OPERATING_RATE, // 0 = don't set
+    private val extraDecoderKeys: Map<String, Int> = emptyMap(), // debug: more decoder format keys
     // The host's volume/playback state; the first one also means it takes ACTION messages.
     private val onMediaState: ((MediaState) -> Unit)? = null,
     // Stream parameters for this session (network thread), e.g. to match the panel's refresh rate.
@@ -253,6 +255,8 @@ class StreamClient(
                                 forcedDecoder = forcedDecoder,
                                 rotationDegrees = config.rotationDegrees,
                                 stats = stats,
+                                operatingRate = operatingRate,
+                                extraKeys = extraDecoderKeys,
                             ).also { stats?.onConfig(config, it.codecName, it.lowLatency) }
                             onConfig?.invoke(config)
                             listener.onStatus(null)

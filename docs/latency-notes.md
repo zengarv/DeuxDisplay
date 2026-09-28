@@ -166,6 +166,39 @@ HEVC MFT, dragging windows (15–35 fps of real frames).
 - The panel stays at 60 Hz unless touched, whatever the app requests (ColorOS policy; the app's
   90 Hz vote reaches SurfaceFlinger). See the debug stats overlay's warnings.
 
+### Decoder operating rate and USB tethering (2026-09-28)
+
+OnePlus Pad Go, USB, HEVC 2408×1720 @ 60 fps, adaptive bitrate (~28 Mbit/s), a scripted
+1200×800 animation on the virtual monitor (~56 fps). Medians of 2 s windows over ~20 s per run,
+three alternating pairs.
+
+| Decoder config | inside decoder | present→decoded p50 | → on screen p50 / p95 |
+|----------------|---------------:|--------------------:|----------------------:|
+| no `KEY_OPERATING_RATE` | 36.1–37.0 ms | 65.9–67.2 ms | 70.2–71.2 / 89.0–89.3 ms |
+| `KEY_OPERATING_RATE` = 32767 | 32.2–32.7 ms | 61.5–62.6 ms | 65.3–66.5 / 82.7–84.2 ms |
+
+- The operating rate is worth ~4.5 ms at p50 and ~6 ms at p95; now the default.
+- On top of it, none of these `c2.mtk.hevc.decoder` vendor parameters changed anything:
+  `vendor.mtk.ext.vdec.vilte.feature-on=1`, `vendor.mtk.vdec.bq.guard.interval.time.value=0`,
+  `vendor.mtk.vdec.cpu.boost.mode.value=1`, `vendor.mtk.vdec.oplus.media.sched.mode.value=1`.
+  The app logs the decoder's vendor parameters; `--es debug_decoder_keys "k=v,..."` sets more.
+- The host's SPS is already ideal (HEVC `max_num_reorder_pics` 0, DPB 2; H.264 VUI
+  `max_num_reorder_frames` 0, `max_dec_frame_buffering` 1), so the ~32 ms hold is internal to
+  the MediaTek decoder, not signalled by the stream.
+
+Transport: TCP echo (TCP_NODELAY on both ends, 60 Hz), adb tunnel vs the tablet's USB tethering
+(RNDIS, 426 Mbit/s link), back to back:
+
+| Round trip | adb tunnel | USB tethering |
+|------------|-----------:|--------------:|
+| 64 B p50 | 2.7–3.4 ms | 1.5 ms |
+| 40 KB p50 / p95 | 5.1–6.1 / 13–19 ms | 6.1 / 8.6 ms |
+| 150 KB p50 | 12–14 ms | 9.5 ms |
+
+- A typical frame gains nothing at the median; tethering mainly trims the tail (~3–5 ms one
+  way at p95) and large frames (~2 ms). Not worth losing adb's plug and play for (Android apps
+  can't turn tethering on, and it shares the tablet's internet with the PC).
+
 ### Open leads for M4
 - Encode takes ~20 ms at 6.4 MP even on the fastest preset, with no input wait. Next suspects:
   GPU clock ramp-up under bursty load, MFT internal async depth

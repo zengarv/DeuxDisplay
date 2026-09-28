@@ -256,8 +256,14 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
         val wifi = if (useWifi && secrets != null && wifiSupported) WifiLink(this, secrets) else null
         // adb shell am start -n io.github.zengarv.deuxdisplay/.MainActivity --ez debug_no_surface true
         // ... --es debug_decoder c2.android.avc.decoder   (force a specific decoder)
+        // ... --ei debug_operating_rate 120               (decoder operating-rate hint; 0 = none)
         val noSurface = intent.getBooleanExtra("debug_no_surface", false)
         val decoder = intent.getStringExtra("debug_decoder")
+        val operatingRate = intent.getIntExtra("debug_operating_rate", VideoDecoder.DEFAULT_OPERATING_RATE)
+        // ... --es debug_decoder_keys "vendor.x=1,vendor.y=0"  (more integer decoder format keys)
+        val decoderKeys = intent.getStringExtra("debug_decoder_keys").orEmpty().split(',')
+            .mapNotNull { entry -> entry.split('=').takeIf { it.size == 2 }?.let { (k, v) -> v.trim().toIntOrNull()?.let { k.trim() to it } } }
+            .toMap()
         client = StreamClient(
             hello,
             holder.surface,
@@ -270,6 +276,8 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
             stats = stats,
             decodeWithoutSurface = noSurface,
             forcedDecoder = decoder,
+            operatingRate = operatingRate,
+            extraDecoderKeys = decoderKeys,
         ).also {
             it.setOrientation(orientationDegrees(resources.configuration))
             it.start()

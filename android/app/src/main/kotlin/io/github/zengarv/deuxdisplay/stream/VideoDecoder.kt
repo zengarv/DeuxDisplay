@@ -34,6 +34,9 @@ class VideoDecoder(
     // when it shows the surface, so it costs nothing in the decode path.
     private val rotationDegrees: Int = 0,
     private val stats: StreamStats? = null, // debug overlay counters
+    // KEY_OPERATING_RATE hint; decoders size their clocks from it. 0 = don't set.
+    private val operatingRate: Int = DEFAULT_OPERATING_RATE,
+    private val extraKeys: Map<String, Int> = emptyMap(), // debug: more integer format keys
 ) {
     /** Per-frame timestamps on the client clock (µs, System.nanoTime based); 0 = unknown. */
     fun interface FrameTimingListener {
@@ -171,28 +174,52 @@ class VideoDecoder(
     }
 
     private fun configure(surface: Surface?, width: Int, height: Int, choice: DecoderChoice): Boolean {
-        val format = baseFormat(width, height)
+        // Latency keys beyond the baseline, most important first. Vendor codecs vary: when
+        // configure() rejects the format, drop the least important key left and retry, so one
+        // unsupported key doesn't cost the others.
+        val keys = mutableListOf<Pair<String, Int>>()
         // Set even when FEATURE_LowLatency isn't advertised: some vendor decoders (MediaTek C2)
-        // honor it anyway, and configure() falls back to a plain format if it's rejected.
+        // honor it anyway.
+        var lowLatencyKey: String? = null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            format.setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
+            lowLatencyKey = MediaFormat.KEY_LOW_LATENCY
+            keys += lowLatencyKey to 1
         }
-        format.setInteger(MediaFormat.KEY_PRIORITY, 0) // realtime
+        keys += MediaFormat.KEY_PRIORITY to 0 // realtime
+        // Decoders scale their clocks to the operating rate; a desktop stream wants frames out as
+        // fast as the hardware can, not paced for its average rate.
+        if (operatingRate > 0) keys += MediaFormat.KEY_OPERATING_RATE to operatingRate
         if (choice.name.contains("mtk", ignoreCase = true)) {
-            format.setInteger("vdec-lowlatency", 1) // MediaTek (OMX-era) low-latency hint
+            keys += "vdec-lowlatency" to 1 // MediaTek (OMX-era) low-latency hint
             // OPPO/OnePlus MediaTek decoders run a video post-processor (motion interpolation,
             // quality tuner) that buffers frames. A desktop stream wants none of it.
-            format.setInteger("vendor.mtk.ext.vdec.vpp.disabled.value", 1)
+            keys += "vendor.mtk.ext.vdec.vpp.disabled.value" to 1
         }
-        return try {
-            codec.configure(format, surface, null, 0)
-            choice.lowLatency
-        } catch (e: RuntimeException) {
-            // Some vendor codecs reject low-latency/priority keys; retry with the plain format.
-            Log.w(TAG, "low-latency configure failed, falling back", e)
-            codec.reset()
-            codec.configure(baseFormat(width, height), surface, null, 0)
-            false
+        keys += extraKeys.toList()
+        while (true) {
+            val format = baseFormat(width, height).apply { keys.forEach { (key, value) -> setInteger(key, value) } }
+            try {
+                codec.configure(format, surface, null, 0)
+                Log.i(TAG, "decoder configured with ${keys.joinToString { "${it.first}=${it.second}" }}")
+                logVendorParameters()
+                return choice.lowLatency && keys.any { it.first == lowLatencyKey }
+            } catch (e: RuntimeException) {
+                if (keys.isEmpty()) throw e
+                val dropped = keys.removeAt(keys.lastIndex)
+                Log.w(TAG, "configure rejected; retrying without ${dropped.first}", e)
+                codec.reset()
+            }
+        }
+    }
+
+    /** Diagnostic: the vendor parameters this decoder takes (Android 12+), to find latency knobs. */
+    private fun logVendorParameters() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+        try {
+            val names = codec.supportedVendorParameters
+            Log.i(TAG, "$codecName vendor parameters (${names.size}): ${names.sorted().joinToString()}")
+        } catch (e: IllegalStateException) {
+            Log.d(TAG, "vendor parameters unavailable: ${e.message}")
         }
     }
 
@@ -238,6 +265,9 @@ class VideoDecoder(
                 ?: return false
             return info.getCapabilitiesForType(mime).videoCapabilities?.isSizeSupported(width, height) == true
         }
+
+        /** "As fast as possible": decoders treat rates beyond their limit as their maximum. */
+        const val DEFAULT_OPERATING_RATE = Short.MAX_VALUE.toInt()
 
         private const val INPUT_TIMEOUT_US = 50_000L
         private const val OUTPUT_TIMEOUT_US = 100_000L
