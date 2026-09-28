@@ -92,7 +92,7 @@ sessions use separate pointer-ID ranges and each injected frame repeats the othe
 fingers that are still down.
 
 ### Android client — `android/`
-Kotlin, minSdk 26, targets API 35. A single full-screen, orientation-locked activity with a
+Kotlin, minSdk 23, targets API 35. A single full-screen, orientation-locked activity with a
 `SurfaceView`. `MediaCodec` in async mode decodes straight to that surface.
 `KEY_LOW_LATENCY` is only set when the decoder advertises `FEATURE_LowLatency`, and
 configuration falls back to a plain config if the vendor codec rejects low-latency keys.

@@ -232,6 +232,25 @@ alternating rounds per codec.
   arrives mid-pass waits for it.
 - No CBR filler: H.264/HEVC streams are all slice data (no filler NAL units).
 
+### Legacy client: Nexus 7 (2013), Android 6 (2026-09-29)
+USB (adb reverse), H.264 1440×900 (the decoder refuses the 1920×1200 panel size), adaptive
+bitrate, `OMX.qcom.video.decoder.avc`. Host side stays at present→sent ≈ 13–15 ms
+(acquire 5–7 + compose 2 + encode 5–6); the rest is the tablet.
+
+| Stream | present→received p50 | →decoded p50 | → on screen p50 / p95 |
+|--------|---------------------:|-------------:|----------------------:|
+| 60 Hz  | 65–580 ms            | 98–620 ms    | 170–680 / 260–700 ms  |
+| 30 Hz  | 25–34 ms             | 52–67 ms     | 84–100 / 97–135 ms    |
+
+- At 60 Hz the link and decoder can't keep up: frames queue in transit (ABR walks 30 → 7 Mbit/s
+  and delivery p50 still exceeds 100 ms). At 30 Hz the queue drains and ABR settles near
+  5 Mbit/s. Decoding adds ≈ 30 ms and display ≈ 30 ms on top of transit.
+- The OMX component ignores `KEY_PRIORITY`/`KEY_OPERATING_RATE`; there is no low-latency mode.
+- Startup bug found here: the decoder has no input buffer for the first ~100 ms, so the client
+  dropped the SPS/PPS packet. The host sends parameter sets only when they change, so every
+  later keyframe failed to decode (black screen). The client now resends the last unqueued
+  SPS/PPS ahead of the next keyframe.
+
 ### Open leads for M4
 - Encode takes ~20 ms at 6.4 MP even on the fastest preset, with no input wait. Next suspects:
   GPU clock ramp-up under bursty load, MFT internal async depth

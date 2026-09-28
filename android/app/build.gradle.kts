@@ -9,7 +9,7 @@ android {
 
     defaultConfig {
         applicationId = "io.github.zengarv.deuxdisplay"
-        minSdk = 26
+        minSdk = 23
         targetSdk = 35
         // The release workflow passes these from the git tag (-PversionName=0.2.0 -PversionCode=200).
         versionCode = providers.gradleProperty("versionCode").orNull?.toInt() ?: 1

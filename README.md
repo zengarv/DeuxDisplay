@@ -13,8 +13,8 @@ USB tunnel, or over a private Wi-Fi network the PC creates itself (no router in 
 > **Status: early development, working end to end on the reference device.** Prebuilt
 > downloads are on the [Releases](https://github.com/zengarv/DeuxDisplay/releases) page.
 
-Reference hardware: OnePlus Pad Go (2408×1720 @ 90 Hz). Other Windows 11 PCs and Android 8+
-devices are meant to work too.
+Reference hardware: OnePlus Pad Go (2408×1720 @ 90 Hz). Other Windows 11 PCs and Android 6+
+devices are meant to work too (a 2013 Nexus 7 on Android 6.0.1 works at 1440×900 @ 30 Hz).
 
 ## How it works
 
@@ -323,7 +323,7 @@ Every push is also built by CI. The **Actions** tab has artifacts from the lates
   .\scripts\bootstrap-dev.ps1        # add -PersistEnv to set JAVA_HOME/ANDROID_HOME/PATH for new shells
   ```
 
-**Tablet** (Android 8+; Wi-Fi mode needs Android 10+):
+**Tablet** (Android 6+; Wi-Fi mode needs Android 10+):
 1. Settings > About tablet > tap **Build number** 7 times to unlock Developer options.
 2. Developer options > turn on **USB debugging**.
 3. Plug it into the PC and accept **Allow USB debugging** (tick *Always allow from this computer*).

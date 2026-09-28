@@ -26,3 +26,27 @@ Observed at runtime (M3, 2026-09-27):
   limited range (`color-range=2`), SDR transfer.
 - The app's `HELLO`: 2408×1720, 60 Hz, `densityDpi` 360, physical 260.047 × 260.268 dpi,
   which gives a 235 × 168 mm virtual monitor. Windows picks 200% scaling.
+
+## Nexus 7 (2013) — `flo` (legacy, best effort)
+
+| Property           | Value                                                          |
+|--------------------|----------------------------------------------------------------|
+| Android            | 6.0.1 (API 23), build `MOB30X`, last official update           |
+| SoC                | Qualcomm Snapdragon S4 Pro (`msm8960`), `armeabi-v7a`          |
+| Native panel       | 1200 × 1920 (portrait native), **1920 × 1200 landscape**       |
+| Density            | 320 (`densityDpi`), physical ≈ 321 dpi                         |
+| Refresh modes      | 60 Hz                                                          |
+| HW AVC decoder     | `OMX.qcom.video.decoder.avc` (`media_codecs.xml` limit 1920 × 1088) |
+| HW HEVC / VP9      | none                                                           |
+
+Observed at runtime (2026-09-29):
+- `VideoCapabilities` claims 64–1920 for both width and height, but `configure()` at 1920×1200
+  fails with `Set Resolution failed` (-1010). The app therefore test-configures each size it
+  offers; here the options are 1440×900, 1280×800 and 960×600, and Auto picks 1440×900.
+- `KEY_PRIORITY` and `KEY_OPERATING_RATE` are accepted by configure but ignored by the OMX
+  component ("does not support config priority / operating rate"). No `FEATURE_LowLatency`.
+- Rated 47 fps at 1440×900. The first `dequeueInputBuffer` after start times out, so the first
+  packets (including SPS/PPS) are dropped; the client keeps them and resends before the next
+  keyframe.
+- Usable at 1440×900 @ 30 Hz (≈ 90 ms to screen); see `latency-notes.md`. The micro-USB port
+  drops the adb link when the cable moves.
