@@ -87,6 +87,7 @@
     <ClInclude Include="src\render\Rotation.h" />
     <ClInclude Include="src\encode\AdaptiveBitrate.h" />
     <ClInclude Include="src\encode\AnnexB.h" />
+    <ClInclude Include="src\encode\Vp9Header.h" />
     <ClInclude Include="src\encode\MfH264Encoder.h" />
     <ClInclude Include="src\input\Shortcuts.h" />
     <ClInclude Include="src\input\TouchInjector.h" />

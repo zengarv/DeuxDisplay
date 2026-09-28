@@ -130,7 +130,7 @@ void PrintUsage()
     std::wprintf(L"DeuxDisplayHost\n\n"
                  L"Usage:\n"
                  L"  DeuxDisplayHost --serve [--port N] [--bitrate auto|KBPS] [--max-fps N] [--max-stream-size WxH]\n"
-                 L"                          [--codec auto|h264|hevc] [--repeat-frames] [--no-touch]\n"
+                 L"                          [--codec auto|h264|hevc|vp9] [--repeat-frames] [--no-touch]\n"
                  L"                          [--transport both|usb|wifi] [--no-adb] [--adb PATH]\n"
                  L"                          [--output \\\\.\\DISPLAYn]\n"
                  L"      Stream to a client, plugging a virtual monitor that matches the client. Clients connect\n"
@@ -181,7 +181,7 @@ bool ParseServeOptions(int argc, wchar_t** argv, dd::ServeOptions& options)
         else if (arg == L"--codec" && i + 1 < argc)
         {
             options.codec = argv[++i];
-            if (options.codec != L"auto" && options.codec != L"h264" && options.codec != L"hevc")
+            if (options.codec != L"auto" && options.codec != L"h264" && options.codec != L"hevc" && options.codec != L"vp9")
             {
                 return false;
             }

@@ -79,9 +79,11 @@ class ProtocolTest {
 
     @Test
     fun configRoundTrip() {
-        val config = Config(Codec.H264, 2408, 1720, 60_000, 20_000, rotationDegrees = 90)
+        val config = Config(Codec.VP9, 2408, 1720, 60_000, 20_000, rotationDegrees = 90, fullRange = true)
         val bytes = config.serialize()
-        assertEquals(18, bytes.size)
+        assertEquals(20, bytes.size)
+        assertEquals(2.toByte(), bytes[2]) // same layout as the host: codec VP9, flags full range
+        assertEquals(1.toByte(), bytes[18])
         assertEquals(config, Config.parse(bytes))
         // Older host: no rotation field.
         assertEquals(0, Config.parse(bytes.copyOf(16)).rotationDegrees)
@@ -144,8 +146,12 @@ class ProtocolTest {
         assertArrayEquals(byteArrayOf(0xC8.toByte(), 0xAF.toByte(), 0, 0, 30, 0), settings.serialize())
         assertEquals(settings, EncoderSettings.parse(settings.serialize()))
 
-        val state = EncoderState(62_000, adaptive = true, quality = 0)
-        assertArrayEquals(byteArrayOf(0x30, 0xF2.toByte(), 0, 0, 1, 0, 0, 0), state.serialize())
+        val flagged = EncoderSettings(0, 255, Protocol.ENCODER_FULL_RANGE or Protocol.ENCODER_SHARP_REFRESH)
+        assertArrayEquals(byteArrayOf(0, 0, 0, 0, 0xFF.toByte(), 3), flagged.serialize())
+        assertEquals(flagged, EncoderSettings.parse(flagged.serialize()))
+
+        val state = EncoderState(62_000, adaptive = true, quality = 0, flags = Protocol.ENCODER_SHARP_REFRESH)
+        assertArrayEquals(byteArrayOf(0x30, 0xF2.toByte(), 0, 0, 5, 0, 0, 0), state.serialize())
         assertEquals(state, EncoderState.parse(state.serialize()))
     }
 

@@ -13,6 +13,11 @@ object Protocol {
 
     const val CODEC_MASK_H264: Int = 1 shl 0
     const val CODEC_MASK_HEVC: Int = 1 shl 1
+    const val CODEC_MASK_VP9: Int = 1 shl 2
+
+    /** HELLO `encoder_flags` / ENCODER_SETTINGS `flags`. */
+    const val ENCODER_FULL_RANGE: Int = 1 shl 0
+    const val ENCODER_SHARP_REFRESH: Int = 1 shl 1
 
     const val FLAG_KEYFRAME: Int = 1 shl 0
     const val FLAG_CODEC_CONFIG: Int = 1 shl 1
@@ -55,7 +60,8 @@ object MessageType {
 
 enum class Codec(val wire: Int) {
     H264(0),
-    HEVC(1);
+    HEVC(1),
+    VP9(2);
 
     companion object {
         fun fromWire(value: Int): Codec? = entries.firstOrNull { it.wire == value }
@@ -109,6 +115,7 @@ data class Hello(
     /** Encoder picks (see [EncoderSettings]); optional on the wire. */
     val bitrateKbps: Int = 0,
     val encoderQuality: Int = Protocol.QUALITY_HOST_DECIDES,
+    val encoderFlags: Int = 0, // Protocol.ENCODER_*
     /** Stream sizes (landscape) and frame rates the client can show; optional on the wire. */
     val sizes: List<Pair<Int, Int>> = emptyList(),
     val rates: List<Int> = emptyList(),
@@ -133,7 +140,7 @@ data class Hello(
             putInt(modeRefreshMilliHz)
             putInt(bitrateKbps)
             put(encoderQuality.toByte())
-            put(0)
+            put(encoderFlags.toByte())
             put(sizes.size.toByte())
             sizes.forEach { (w, h) ->
                 putShort(w.toShort())
@@ -166,7 +173,7 @@ data class Hello(
             val hasEncoder = hasMode && remaining() >= 6
             val bitrate = if (hasEncoder) int else 0
             val quality = if (hasEncoder) get().toInt() and 0xFF else Protocol.QUALITY_HOST_DECIDES
-            if (hasEncoder) get() // reserved
+            val flags = if (hasEncoder) get().toInt() and 0xFF else 0
             var sizes = emptyList<Pair<Int, Int>>()
             var rates = emptyList<Int>()
             if (remaining() >= 1) {
@@ -179,7 +186,7 @@ data class Hello(
             }
             Hello(
                 w, h, dpi, refresh, codecs, String(name, Charsets.UTF_8), xdpi, ydpi, modeW, modeH, modeRefresh,
-                bitrate, quality, sizes, rates, version,
+                bitrate, quality, flags, sizes, rates, version,
             )
         }
     }
@@ -194,8 +201,10 @@ data class Config(
     val protocolVersion: Int = Protocol.VERSION,
     /** Degrees clockwise to rotate each frame for display (optional on the wire; 0 if absent). */
     val rotationDegrees: Int = 0,
+    /** YCbCr 0-255 instead of 16-235 (BT.709 either way). Optional on the wire. */
+    val fullRange: Boolean = false,
 ) {
-    fun serialize(): ByteArray = le(18).apply {
+    fun serialize(): ByteArray = le(20).apply {
         putShort(protocolVersion.toShort())
         put(codec.wire.toByte())
         put(0)
@@ -204,6 +213,8 @@ data class Config(
         putInt(fpsMilliHz)
         putInt(bitrateKbps)
         putShort(rotationDegrees.toShort())
+        put((if (fullRange) 1 else 0).toByte())
+        put(0)
     }.array()
 
     companion object {
@@ -218,7 +229,11 @@ data class Config(
             val codec = Codec.fromWire(codecWire) ?: throw ProtocolException("unknown codec $codecWire")
             // Optional trailing rotation; older hosts don't send it.
             val rotation = if (remaining() >= 2) u16() else 0
-            Config(codec, w, h, fps, bitrate, version, if (rotation % 90 == 0 && rotation < 360) rotation else 0)
+            val flags = if (remaining() >= 1) get().toInt() and 0xFF else 0
+            Config(
+                codec, w, h, fps, bitrate, version, if (rotation % 90 == 0 && rotation < 360) rotation else 0,
+                fullRange = flags and 1 != 0,
+            )
         }
     }
 }
@@ -322,19 +337,22 @@ data class MediaState(val playback: Int, val muted: Boolean, val volumePercent: 
  * ENCODER_SETTINGS: the user's bitrate (kbit/s, 0 = host decides: adaptive) and quality/speed
  * preset (0 fastest .. 100 best, [Protocol.QUALITY_HOST_DECIDES]) picks, applied live.
  */
-data class EncoderSettings(val bitrateKbps: Int = 0, val quality: Int = Protocol.QUALITY_HOST_DECIDES) {
+data class EncoderSettings(
+    val bitrateKbps: Int = 0,
+    val quality: Int = Protocol.QUALITY_HOST_DECIDES,
+    val flags: Int = 0, // Protocol.ENCODER_*
+) {
     fun serialize(): ByteArray = le(6).apply {
         putInt(bitrateKbps)
         put(quality.toByte())
-        put(0)
+        put(flags.toByte())
     }.array()
 
     companion object {
         fun parse(payload: ByteArray): EncoderSettings = parsing(payload) {
             val bitrate = int
             val quality = get().toInt() and 0xFF
-            get() // reserved
-            EncoderSettings(bitrate, quality)
+            EncoderSettings(bitrate, quality, get().toInt() and 0xFF)
         }
     }
 }
@@ -356,10 +374,10 @@ data class DisplayMode(val width: Int, val height: Int, val refreshHz: Int) {
 }
 
 /** ENCODER_STATE: what the host's encoder runs at now, and whether it tunes the bitrate itself. */
-data class EncoderState(val bitrateKbps: Int, val adaptive: Boolean, val quality: Int) {
+data class EncoderState(val bitrateKbps: Int, val adaptive: Boolean, val quality: Int, val flags: Int = 0) {
     fun serialize(): ByteArray = le(8).apply {
         putInt(bitrateKbps)
-        put((if (adaptive) 1 else 0).toByte())
+        put(((if (adaptive) 1 else 0) or (flags shl 1)).toByte())
         put(quality.toByte())
         putShort(0)
     }.array()
@@ -370,7 +388,7 @@ data class EncoderState(val bitrateKbps: Int, val adaptive: Boolean, val quality
             val flags = get().toInt() and 0xFF
             val quality = get().toInt() and 0xFF
             u16() // reserved
-            EncoderState(bitrate, flags and 1 != 0, quality)
+            EncoderState(bitrate, flags and 1 != 0, quality, flags shr 1)
         }
     }
 }

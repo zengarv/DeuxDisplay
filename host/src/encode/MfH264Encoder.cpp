@@ -83,6 +83,37 @@ HRESULT SetBool(ICodecAPI* api, const GUID& key, bool value)
 
 } // namespace
 
+const wchar_t* CodecName(VideoCodec codec)
+{
+    switch (codec)
+    {
+    case VideoCodec::Hevc:
+        return L"HEVC";
+    case VideoCodec::Vp9:
+        return L"VP9";
+    default:
+        return L"H.264";
+    }
+}
+
+namespace
+{
+
+GUID SubtypeFor(VideoCodec codec)
+{
+    switch (codec)
+    {
+    case VideoCodec::Hevc:
+        return MFVideoFormat_HEVC;
+    case VideoCodec::Vp9:
+        return MFVideoFormat_VP90;
+    default:
+        return MFVideoFormat_H264;
+    }
+}
+
+} // namespace
+
 MfH264Encoder::MfH264Encoder() = default;
 
 MfH264Encoder::~MfH264Encoder()
@@ -142,7 +173,7 @@ HRESULT MfH264Encoder::Initialize(ID3D11Device* device, LUID adapterLuid, const 
     }
 
     MFT_REGISTER_TYPE_INFO input{MFMediaType_Video, MFVideoFormat_NV12};
-    MFT_REGISTER_TYPE_INFO output{MFMediaType_Video, settings.hevc ? MFVideoFormat_HEVC : MFVideoFormat_H264};
+    MFT_REGISTER_TYPE_INFO output{MFMediaType_Video, SubtypeFor(settings.codec)};
     ComPtr<IMFAttributes> enumAttributes;
     MFCreateAttributes(&enumAttributes, 1);
     enumAttributes->SetBlob(MFT_ENUM_ADAPTER_LUID, reinterpret_cast<const UINT8*>(&adapterLuid), sizeof(adapterLuid));
@@ -277,15 +308,20 @@ HRESULT MfH264Encoder::SetMediaTypes(const EncoderSettings& settings)
     ComPtr<IMFMediaType> out;
     MFCreateMediaType(&out);
     out->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
-    out->SetGUID(MF_MT_SUBTYPE, settings.hevc ? MFVideoFormat_HEVC : MFVideoFormat_H264);
+    out->SetGUID(MF_MT_SUBTYPE, SubtypeFor(settings.codec));
     out->SetUINT32(MF_MT_AVG_BITRATE, settings.bitrateKbps * 1000);
     MFSetAttributeSize(out.Get(), MF_MT_FRAME_SIZE, settings.width, settings.height);
     MFSetAttributeRatio(out.Get(), MF_MT_FRAME_RATE, settings.fps, 1);
     MFSetAttributeRatio(out.Get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
     out->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
-    out->SetUINT32(MF_MT_MPEG2_PROFILE, settings.hevc ? static_cast<UINT32>(eAVEncH265VProfile_Main_420_8)
-                                                      : static_cast<UINT32>(eAVEncH264VProfile_High));
-    out->SetUINT32(MF_MT_VIDEO_NOMINAL_RANGE, MFNominalRange_16_235);
+    if (settings.codec != VideoCodec::Vp9) // VP9: profile 0 (the MFT takes only 4:2:0 input)
+    {
+        out->SetUINT32(MF_MT_MPEG2_PROFILE, settings.codec == VideoCodec::Hevc
+                                                ? static_cast<UINT32>(eAVEncH265VProfile_Main_420_8)
+                                                : static_cast<UINT32>(eAVEncH264VProfile_High));
+    }
+    const UINT32 range = settings.fullRange ? MFNominalRange_0_255 : MFNominalRange_16_235;
+    out->SetUINT32(MF_MT_VIDEO_NOMINAL_RANGE, range);
     out->SetUINT32(MF_MT_YUV_MATRIX, MFVideoTransferMatrix_BT709);
     out->SetUINT32(MF_MT_VIDEO_PRIMARIES, MFVideoPrimaries_BT709);
     out->SetUINT32(MF_MT_TRANSFER_FUNCTION, MFVideoTransFunc_709);
@@ -304,6 +340,8 @@ HRESULT MfH264Encoder::SetMediaTypes(const EncoderSettings& settings)
     MFSetAttributeRatio(in.Get(), MF_MT_FRAME_RATE, settings.fps, 1);
     MFSetAttributeRatio(in.Get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
     in->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
+    in->SetUINT32(MF_MT_VIDEO_NOMINAL_RANGE, range);
+    in->SetUINT32(MF_MT_YUV_MATRIX, MFVideoTransferMatrix_BT709);
     hr = m_transform->SetInputType(0, in.Get(), 0);
     if (FAILED(hr))
     {

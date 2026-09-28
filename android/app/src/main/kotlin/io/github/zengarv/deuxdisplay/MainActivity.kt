@@ -58,6 +58,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
     private lateinit var codecSpinner: Spinner
     private var codecChoices: List<StreamCodec> = emptyList()
     private val hevcDecoder by lazy { VideoDecoder.hasHardwareDecoder(MediaFormat.MIMETYPE_VIDEO_HEVC) }
+    private val vp9Decoder by lazy { VideoDecoder.hasHardwareDecoder(MediaFormat.MIMETYPE_VIDEO_VP9) }
     private lateinit var connectionSpinner: Spinner
     private lateinit var pairingLabel: TextView
     private lateinit var codeField: EditText
@@ -249,7 +250,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
 
     private fun startClient(holder: SurfaceHolder) {
         val hello = DisplayInfo.hello(this, mode, modeOptions)
-            .copy(bitrateKbps = encoder.bitrateKbps, encoderQuality = encoder.quality)
+            .copy(bitrateKbps = encoder.bitrateKbps, encoderQuality = encoder.quality, encoderFlags = encoder.flags)
         val secrets = pairing.load()?.let { Pairing.derive(it.code) }
         if (useWifi && secrets == null) {
             showStatus(getString(R.string.status_not_paired))
@@ -388,7 +389,8 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
         }
 
         codecChoices = listOf(StreamCodec.AUTO, StreamCodec.H264) +
-            if (hevcDecoder) listOf(StreamCodec.HEVC) else emptyList()
+            (if (hevcDecoder) listOf(StreamCodec.HEVC) else emptyList()) +
+            (if (vp9Decoder) listOf(StreamCodec.VP9) else emptyList())
         codecSpinner = Spinner(this).apply {
             adapter = spinnerAdapter(codecChoices.map { getString(codecLabel(it)) })
             setSelection(codecChoices.indexOf(mode.codec).coerceAtLeast(0))
@@ -422,6 +424,18 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
                 updateDockVisibility()
             }
         }
+
+        // Stream options applied live, like the sliders: see Protocol.ENCODER_*.
+        val flagSwitch = { flag: Int ->
+            Switch(this).apply {
+                isChecked = encoder.flags and flag != 0
+                setOnCheckedChangeListener { _, checked ->
+                    setEncoder(encoder.copy(flags = if (checked) encoder.flags or flag else encoder.flags and flag.inv()))
+                }
+            }
+        }
+        val fullRangeSwitch = flagSwitch(Protocol.ENCODER_FULL_RANGE)
+        val sharpRefreshSwitch = flagSwitch(Protocol.ENCODER_SHARP_REFRESH)
 
         val statsSwitch = Switch(this).apply {
             isChecked = statsEnabled
@@ -462,6 +476,8 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
             addView(settingRow(R.string.setting_codec, codecSpinner))
             addView(settingRow(R.string.setting_bitrate, bitrateSlider))
             addView(settingRow(R.string.setting_quality, qualitySlider))
+            addView(settingRow(R.string.setting_full_range, fullRangeSwitch))
+            addView(settingRow(R.string.setting_sharp_refresh, sharpRefreshSwitch))
             addView(settingRow(R.string.setting_connection, connectionSpinner))
             addView(settingRow(R.string.setting_dock, dockSwitch))
             addView(settingRow(R.string.setting_stats, statsSwitch))
@@ -522,6 +538,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
             .putInt(KEY_BITRATE, settings.bitrateKbps)
             .putInt(KEY_QUALITY, settings.quality)
+            .putInt(KEY_ENCODER_FLAGS, settings.flags)
             .apply()
         client?.setEncoderSettings(settings)
     }
@@ -530,7 +547,8 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
         val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
         val kbps = prefs.getInt(KEY_BITRATE, 0).coerceIn(0, MAX_BITRATE_MBPS * 1000)
         val quality = prefs.getInt(KEY_QUALITY, Protocol.QUALITY_HOST_DECIDES)
-        return EncoderSettings(kbps, if (quality in 0..100) quality else Protocol.QUALITY_HOST_DECIDES)
+        val flags = prefs.getInt(KEY_ENCODER_FLAGS, 0) and (Protocol.ENCODER_FULL_RANGE or Protocol.ENCODER_SHARP_REFRESH)
+        return EncoderSettings(kbps, if (quality in 0..100) quality else Protocol.QUALITY_HOST_DECIDES, flags)
     }
 
     private fun spinnerAdapter(labels: List<String>): ArrayAdapter<String> =
@@ -555,6 +573,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
         StreamCodec.AUTO -> R.string.setting_auto
         StreamCodec.H264 -> R.string.codec_h264
         StreamCodec.HEVC -> R.string.codec_hevc
+        StreamCodec.VP9 -> R.string.codec_vp9
     }
 
     private fun resolutionIndexOf(m: StreamMode): Int =
@@ -660,6 +679,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
         if (index == 0) saved = saved.copy(width = 0, height = 0)
         if (saved.refreshHz !in ratesFor(index)) saved = saved.copy(refreshHz = 0)
         if (saved.codec == StreamCodec.HEVC && !hevcDecoder) saved = saved.copy(codec = StreamCodec.AUTO)
+        if (saved.codec == StreamCodec.VP9 && !vp9Decoder) saved = saved.copy(codec = StreamCodec.AUTO)
         return saved
     }
 
@@ -687,6 +707,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
         private const val KEY_STATS = "debug_stats"
         private const val KEY_BITRATE = "bitrate_kbps"
         private const val KEY_QUALITY = "encoder_quality"
+        private const val KEY_ENCODER_FLAGS = "encoder_flags"
         private const val MAX_BITRATE_MBPS = 150
         private const val BITRATE_STEP_MBPS = 5
         private const val QUALITY_STEP = 10

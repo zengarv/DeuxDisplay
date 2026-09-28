@@ -72,7 +72,7 @@ Senders must write header and payload with a single write/send call (see latency
 | 2    | `height_px`         | Native panel height in current orientation               |
 | 2    | `density_dpi`       | Android `densityDpi`                                     |
 | 4    | `refresh_mhz`       | Panel refresh rate in millihertz (e.g. 90000)            |
-| 4    | `codecs`            | Bitmask of codecs to use: bit0 = H.264, bit1 = HEVC. Clients may advertise a subset of what they can decode to express the user's codec pick; the host prefers HEVC when both are set |
+| 4    | `codecs`            | Bitmask of codecs to use: bit0 = H.264, bit1 = HEVC, bit2 = VP9. Clients may advertise a subset of what they can decode to express the user's codec pick; the host prefers HEVC, then H.264, then VP9 |
 | str  | `device_name`       | e.g. `OnePlus OPD2305`                                   |
 | 4    | `xdpi_milli`        | *Optional.* Physical horizontal DPI × 1000 (Android `xdpi`) |
 | 4    | `ydpi_milli`        | *Optional.* Physical vertical DPI × 1000 (Android `ydpi`)   |
@@ -81,11 +81,18 @@ Senders must write header and payload with a single write/send call (see latency
 | 4    | `mode_refresh_mhz`  | *Optional.* Frame rate the user picked (mHz); 0 = host decides |
 | 4    | `bitrate_kbps`      | *Optional.* Encoder bitrate the user picked; 0 = host decides (see `ENCODER_SETTINGS`) |
 | 1    | `encoder_quality`   | *Optional.* 0 (fastest) – 100 (best quality); `0xFF` = host decides |
-| 1    | `reserved`          | *Optional.* 0                                            |
+| 1    | `encoder_flags`     | *Optional.* Stream options, see below                    |
 | 1    | `size_count`        | *Optional.* Stream sizes that follow                     |
 | 4×n  | `sizes`             | *Optional.* `u16` width, `u16` height (landscape): every stream size the client can show |
 | 1    | `rate_count`        | *Optional.* Frame rates that follow                      |
 | 2×n  | `rates`             | *Optional.* `u16` Hz: every frame rate the client can show |
+
+`encoder_flags` (also in `ENCODER_SETTINGS`):
+
+| Bit | Option          | Meaning                                                                 |
+|----:|-----------------|-------------------------------------------------------------------------|
+| 0   | Full range      | YCbCr 0–255 instead of 16–235 (BT.709 either way): a little more contrast, same cost. `CONFIG` confirms it, and the bitstream signals it too (for VP9 the host sets the keyframe header's `color_range` bit, since Intel's encoder doesn't) |
+| 1   | Sharp refresh   | Once the screen has been still for 120 ms, the host encodes the last image 3 more times, sent as `REPEAT` frames. Encoders code the difference to their own lossy copy, so each pass restores detail the frame budget dropped; a converged image costs a few bytes. Nothing extra is sent while the screen changes |
 
 The host plugs a virtual monitor matching `width_px` × `height_px` at `refresh_mhz`, with a
 physical size derived from `xdpi_milli`/`ydpi_milli` (falling back to `density_dpi`), so Windows
@@ -120,13 +127,15 @@ one sending the lists must send the encoder fields.
 | Size | Field               | Notes                                         |
 |-----:|---------------------|-----------------------------------------------|
 | 2    | `protocol_version`  | Version the host will speak (≤ client's)      |
-| 1    | `codec`             | `0` = H.264, `1` = HEVC                       |
+| 1    | `codec`             | `0` = H.264, `1` = HEVC, `2` = VP9 (profile 0, 8-bit 4:2:0) |
 | 1    | `reserved`          | 0                                             |
 | 2    | `width_px`          | Encoded frame width                           |
 | 2    | `height_px`         | Encoded frame height                          |
 | 4    | `fps_mhz`           | Target frame rate in millihertz               |
 | 4    | `bitrate_kbps`      | Target bitrate                                |
 | 2    | `rotation`          | *Optional.* Degrees clockwise (0/90/180/270) the client rotates each frame to show it upright; 0 if absent |
+| 1    | `flags`             | *Optional.* bit0 = full range (YCbCr 0–255; else 16–235). Clients configure the decoder's color range from it |
+| 1    | `reserved`          | *Optional.* 0                                 |
 
 Frames are always encoded in the display's native **scan-out** orientation (landscape), even when
 Windows has rotated the display: Desktop Duplication delivers them that way, and the client's
@@ -141,21 +150,23 @@ next `CODEC_CONFIG` + keyframe.
 
 ### `VIDEO_FRAME` (host → client)
 
-Payload is one complete access unit in **Annex-B** format (start-code delimited NAL units).
-`timestamp` is the host capture time of the frame.
+Payload is one complete access unit: for H.264/HEVC in **Annex-B** format (start-code delimited
+NAL units), for VP9 one frame (or superframe) as the encoder produced it. `timestamp` is the host
+capture time of the frame.
 
 | Flag bit | Meaning                                                   |
 |---------:|-----------------------------------------------------------|
-| 0        | `KEYFRAME` — access unit is an IDR                        |
+| 0        | `KEYFRAME` — access unit is an IDR (VP9: a keyframe)      |
 | 1        | `CODEC_CONFIG` — payload contains only SPS/PPS (/VPS)     |
 | 2        | `REPEAT` — re-encode of the previous image (see below)    |
 
-`REPEAT` frames exist because some hardware decoders (e.g. MediaTek) only output frame N once
-frame N+1 has been submitted. Right after each frame the host sends a cheap re-encode of the
-same image (almost entirely skip blocks), so the real frame leaves the decoder immediately.
-Clients decode them like any other frame; they're excluded from `FRAME_STATS`.
+`REPEAT` frames re-encode the image already on screen: sharp-refresh passes (see
+`encoder_flags`), or, with the host's `--repeat-frames`, a cheap re-encode right after each frame
+for hardware decoders that only output frame N once frame N+1 has been submitted. Clients decode
+them like any other frame; they're excluded from `FRAME_STATS`.
 
-The host sends a `CODEC_CONFIG` frame before the first keyframe and whenever parameters change.
+For H.264/HEVC the host sends a `CODEC_CONFIG` frame before the first keyframe and whenever
+parameters change. VP9 has no parameter sets: every keyframe is self-contained.
 Frames arrive at a variable rate: the host only sends when the desktop changed.
 
 ### `REQUEST_KEYFRAME` (client → host)
@@ -274,10 +285,11 @@ ignored with a log line. The stream then restarts at the new size and rate, anno
 |-----:|----------------|-----------------------------------------------------------------|
 | 4    | `bitrate_kbps` | Bitrate to encode at; 0 = host decides                          |
 | 1    | `quality`      | Encoder quality/speed preset, 0 (fastest) – 100; `0xFF` = host decides |
-| 1    | `reserved`     | 0                                                               |
+| 1    | `flags`        | `encoder_flags` (see `HELLO`)                                   |
 
-Same meaning as the `HELLO` fields, but mid-session, without a new `CONFIG`. The host applies
-them within a fraction of a second, starting with a keyframe. A host that decides the bitrate itself runs it **adaptively**
+Same meaning as the `HELLO` fields, but mid-session. The host applies bitrate and quality within
+a fraction of a second, starting with a keyframe, without a new `CONFIG`; sharp refresh at once.
+Toggling full range rebuilds the stream like a mode change, announced by `CONFIG`. A host that decides the bitrate itself runs it **adaptively**
 (below). Hosts clamp bitrates to 500–500 000 kbit/s.
 
 ### `ENCODER_STATE` (host → client)
@@ -285,11 +297,11 @@ them within a fraction of a second, starting with a keyframe. A host that decide
 | Size | Field          | Notes                                                    |
 |-----:|----------------|----------------------------------------------------------|
 | 4    | `bitrate_kbps` | Bitrate the encoder is running at now                    |
-| 1    | `flags`        | bit0 = adaptive (the host adjusts `bitrate_kbps` itself) |
+| 1    | `flags`        | bit0 = adaptive (the host adjusts `bitrate_kbps` itself); bits 1–7 = the `encoder_flags` in effect (bit1 full range, bit2 sharp refresh) |
 | 1    | `quality`      | Encoder quality/speed preset in use, 0–100               |
 | 2    | `reserved`     | 0                                                        |
 
-Sent right after `CONFIG` and whenever either value changes. `CONFIG.bitrate_kbps` is only the
+Sent right after `CONFIG` and whenever any of these change. `CONFIG.bitrate_kbps` is only the
 starting bitrate.
 
 ### Adaptive bitrate

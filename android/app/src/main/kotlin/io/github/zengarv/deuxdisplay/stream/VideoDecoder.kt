@@ -33,6 +33,8 @@ class VideoDecoder(
     // Degrees clockwise to rotate frames on screen (CONFIG rotation). Applied by the compositor
     // when it shows the surface, so it costs nothing in the decode path.
     private val rotationDegrees: Int = 0,
+    // YCbCr 0-255 (CONFIG): the output must be shown with the same range the host encoded.
+    private val fullRange: Boolean = false,
     private val stats: StreamStats? = null, // debug overlay counters
     // KEY_OPERATING_RATE hint; decoders size their clocks from it. 0 = don't set.
     private val operatingRate: Int = DEFAULT_OPERATING_RATE,
@@ -228,6 +230,13 @@ class VideoDecoder(
             // Keyframes of a large desktop can exceed the default input buffer size.
             setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, width * height * 3 / 2)
             if (rotationDegrees != 0) setInteger(MediaFormat.KEY_ROTATION, rotationDegrees)
+            // The bitstream says so too; stating it keeps decoders that ignore it from guessing.
+            setInteger(
+                MediaFormat.KEY_COLOR_RANGE,
+                if (fullRange) MediaFormat.COLOR_RANGE_FULL else MediaFormat.COLOR_RANGE_LIMITED,
+            )
+            setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT709)
+            setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_SDR_VIDEO)
         }
 
     private data class DecoderChoice(val name: String, val lowLatency: Boolean)

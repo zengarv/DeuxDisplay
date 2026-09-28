@@ -23,3 +23,4 @@ void RunTouchTests();
 void RunAdbTests();
 void RunAdaptiveBitrateTests();
 void RunModeListTests();
+void RunVp9HeaderTests();

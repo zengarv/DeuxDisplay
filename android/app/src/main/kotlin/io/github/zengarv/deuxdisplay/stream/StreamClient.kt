@@ -115,7 +115,7 @@ class StreamClient(
 
     // Bitrate/quality picks: sent in every HELLO, and live to the running session.
     @Volatile
-    private var encoderSettings = EncoderSettings(hello.bitrateKbps, hello.encoderQuality)
+    private var encoderSettings = EncoderSettings(hello.bitrateKbps, hello.encoderQuality, hello.encoderFlags)
 
     /** New encoder picks: the host applies them from its next frame. Any thread. */
     fun setEncoderSettings(settings: EncoderSettings) {
@@ -221,6 +221,7 @@ class StreamClient(
                 modeRefreshMilliHz = picked.refreshHz * 1000,
                 bitrateKbps = encoder.bitrateKbps,
                 encoderQuality = encoder.quality,
+                encoderFlags = encoder.flags,
             )
             send(MessageType.HELLO, 0, current.serialize())
             // Always state the orientation, so a display left in portrait by an earlier session
@@ -254,6 +255,7 @@ class StreamClient(
                             val mime = when (config.codec) {
                                 Codec.HEVC -> MediaFormat.MIMETYPE_VIDEO_HEVC
                                 Codec.H264 -> MediaFormat.MIMETYPE_VIDEO_AVC
+                                Codec.VP9 -> MediaFormat.MIMETYPE_VIDEO_VP9
                             }
                             decoder = VideoDecoder(
                                 if (decodeWithoutSurface) null else surface,
@@ -278,6 +280,7 @@ class StreamClient(
                                 },
                                 forcedDecoder = forcedDecoder,
                                 rotationDegrees = config.rotationDegrees,
+                                fullRange = config.fullRange,
                                 stats = stats,
                                 operatingRate = operatingRate,
                                 extraKeys = extraDecoderKeys,

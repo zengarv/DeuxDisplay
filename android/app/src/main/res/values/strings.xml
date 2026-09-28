@@ -10,8 +10,9 @@
     <string name="setting_codec">Codec</string>
     <string name="codec_h264">H.264</string>
     <string name="codec_hevc">HEVC (H.265)</string>
+    <string name="codec_vp9">VP9</string>
     <string name="setting_apply">Apply</string>
-    <string name="setting_hint">Press Back while streaming to change these. Bitrate and quality apply right away.</string>
+    <string name="setting_hint">Press Back while streaming to change these. Bitrate, quality, full range and sharp refresh apply right away.</string>
     <string name="setting_connection">Connection</string>
     <string name="connection_usb">USB</string>
     <string name="connection_wifi">Wi-Fi (direct to PC)</string>
@@ -23,6 +24,8 @@
     <string name="status_not_paired">Wi-Fi isn\'t paired yet.\nConnect once over USB, or press Back and enter the pairing code.</string>
     <string name="setting_dock">Shortcut dock</string>
     <string name="setting_stats">Debug stats</string>
+    <string name="setting_full_range">Full-range colour</string>
+    <string name="setting_sharp_refresh">Sharp refresh</string>
     <string name="setting_bitrate">Bitrate</string>
     <string name="bitrate_auto">Auto (adaptive)</string>
     <string name="bitrate_mbps">%1$d Mbps</string>

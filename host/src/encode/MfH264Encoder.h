@@ -16,14 +16,24 @@
 namespace dd::encode
 {
 
+enum class VideoCodec
+{
+    H264,
+    Hevc,
+    Vp9, // no parameter sets: every keyframe is self-contained
+};
+
+const wchar_t* CodecName(VideoCodec codec);
+
 struct EncoderSettings
 {
     UINT width = 0;
     UINT height = 0;
     UINT fps = 60;
     UINT bitrateKbps = 30000;
-    bool hevc = false;       // H.265 instead of H.264
+    VideoCodec codec = VideoCodec::H264;
     UINT qualityVsSpeed = 0; // CODECAPI_AVEncCommonQualityVsSpeed: 0 fastest .. 100 best quality
+    bool fullRange = false;  // YCbCr 0-255 instead of 16-235 (the NV12 input must match)
 };
 
 struct EncoderTiming
@@ -41,8 +51,8 @@ struct EncodedFrame
 
 class EventPump;
 
-// Hardware H.264/HEVC encoder through Media Foundation (NVENC / Quick Sync / AMF behind one API),
-// configured for low latency: no B-frames, CBR, CODECAPI_AVLowLatencyMode.
+// Hardware H.264/HEVC/VP9 encoder through Media Foundation (NVENC / Quick Sync / AMF behind one
+// API), configured for low latency: no B-frames, CBR, CODECAPI_AVLowLatencyMode.
 class MfH264Encoder
 {
   public:

@@ -148,7 +148,7 @@ std::vector<uint8_t> SerializeHello(const Hello& msg)
     w.Put(msg.modeRefreshMilliHz);
     w.Put(msg.bitrateKbps);
     w.Put(msg.encoderQuality);
-    w.Put(uint8_t{0});
+    w.Put(msg.encoderFlags);
     w.Put(static_cast<uint8_t>(msg.sizes.size()));
     for (const auto& size : msg.sizes)
     {
@@ -193,11 +193,12 @@ std::optional<Hello> ParseHello(std::span<const uint8_t> payload)
 
             uint32_t bitrate = 0;
             uint8_t quality = 0;
-            uint8_t reserved = 0;
-            if (r.Get(bitrate) && r.Get(quality) && r.Get(reserved))
+            uint8_t flags = 0;
+            if (r.Get(bitrate) && r.Get(quality) && r.Get(flags))
             {
                 msg.bitrateKbps = bitrate;
                 msg.encoderQuality = quality;
+                msg.encoderFlags = flags;
 
                 uint8_t sizeCount = 0;
                 std::vector<Size> sizes;
@@ -230,7 +231,7 @@ std::optional<Hello> ParseHello(std::span<const uint8_t> payload)
 
 std::vector<uint8_t> SerializeConfig(const Config& msg)
 {
-    Writer w(16);
+    Writer w(20);
     w.Put(msg.protocolVersion);
     w.Put(static_cast<uint8_t>(msg.codec));
     w.Put(uint8_t{0});
@@ -239,6 +240,8 @@ std::vector<uint8_t> SerializeConfig(const Config& msg)
     w.Put(msg.fpsMilliHz);
     w.Put(msg.bitrateKbps);
     w.Put(msg.rotationDegrees);
+    w.Put(static_cast<uint8_t>(msg.fullRange ? 1 : 0));
+    w.Put(uint8_t{0});
     return w.Take();
 }
 
@@ -258,6 +261,11 @@ std::optional<Config> ParseConfig(std::span<const uint8_t> payload)
     if (r.Get(rotation) && rotation % 90 == 0 && rotation < 360) // optional; older hosts omit it
     {
         msg.rotationDegrees = rotation;
+    }
+    uint8_t flags = 0;
+    if (r.Get(flags))
+    {
+        msg.fullRange = (flags & 1) != 0;
     }
     return msg;
 }
@@ -329,7 +337,7 @@ std::vector<uint8_t> SerializeEncoderSettings(const EncoderSettings& msg)
     Writer w(6);
     w.Put(msg.bitrateKbps);
     w.Put(msg.quality);
-    w.Put(uint8_t{0});
+    w.Put(msg.flags);
     return w.Take();
 }
 
@@ -337,8 +345,7 @@ std::optional<EncoderSettings> ParseEncoderSettings(std::span<const uint8_t> pay
 {
     Reader r(payload);
     EncoderSettings msg;
-    uint8_t reserved = 0;
-    if (!r.Get(msg.bitrateKbps) || !r.Get(msg.quality) || !r.Get(reserved))
+    if (!r.Get(msg.bitrateKbps) || !r.Get(msg.quality) || !r.Get(msg.flags))
     {
         return std::nullopt;
     }
@@ -371,7 +378,8 @@ std::vector<uint8_t> SerializeEncoderState(const EncoderState& msg)
 {
     Writer w(8);
     w.Put(msg.bitrateKbps);
-    w.Put(static_cast<uint8_t>(msg.adaptive ? 1 : 0));
+    // flags: bit0 adaptive, then encoder_flags shifted up by one.
+    w.Put(static_cast<uint8_t>((msg.adaptive ? 1 : 0) | msg.flags << 1));
     w.Put(msg.quality);
     w.Put(uint16_t{0});
     return w.Take();
@@ -388,6 +396,7 @@ std::optional<EncoderState> ParseEncoderState(std::span<const uint8_t> payload)
         return std::nullopt;
     }
     msg.adaptive = (flags & 1) != 0;
+    msg.flags = static_cast<uint8_t>(flags >> 1);
     return msg;
 }
 

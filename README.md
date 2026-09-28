@@ -181,12 +181,26 @@ stream follows whatever mode Windows runs, and the app adopts a mode picked on t
 reconnect keeps it. After updating to this version, reinstall the driver once
 (`scripts\install-driver.ps1`): host and driver must match.
 
-**Codec** is *Auto*, *H.264* or *HEVC (H.265)* (HEVC is listed only if the tablet has a hardware
-HEVC decoder). The pick travels in HELLO's `codecs` bitmask: the app advertises only the chosen
+**Codec** is *Auto*, *H.264*, *HEVC (H.265)* or *VP9* (HEVC and VP9 are listed only if the tablet
+has a hardware decoder for them). The pick travels in HELLO's `codecs` bitmask: the app advertises only the chosen
 codec. *Auto* offers HEVC only at sizes the HEVC decoder is rated for, and the host then prefers
 it; an explicit HEVC pick is used at any size. HEVC gives sharper text per bit and more decoder
 headroom, but on the reference tablet it doesn't lower latency (see
-[docs/latency-notes.md](docs/latency-notes.md)).
+[docs/latency-notes.md](docs/latency-notes.md)). VP9 is 4:2:0 like the others (Windows' VP9
+encoder takes no 4:4:4 input), and on the reference tablet it decodes slower than HEVC.
+
+The stream settings also have, applied live without reconnecting:
+
+- **Bitrate**: *Auto* (adaptive, see [docs/wire-protocol.md](docs/wire-protocol.md)) or fixed,
+  5–150 Mbps.
+- **Encoder quality**: *Auto* (fastest) or 0–100. Higher values compress better per bit but
+  encode slower (quality 100 roughly doubled encode time on the dev PC's Intel GPU).
+- **Full-range colour**: YCbCr 0–255 instead of 16–235, for a little more contrast at no cost.
+- **Sharp refresh**: when the screen goes still, the host sends a few extra frames of the same
+  image so text sharpens up; nothing extra is sent while things move.
+
+Colour fringes around text are the 4:2:0 format (colour at half resolution meets ClearType's
+coloured edges), not bitrate; the tablet's decoders only support 4:2:0.
 
 ```mermaid
 flowchart TB
@@ -432,8 +446,9 @@ Good to know:
 ### Tuning
 
 - **On the tablet** (press **Back** while streaming): resolution, frame rate (including 30 fps),
-  codec (Auto / H.264 / HEVC) and connection. Choices are remembered and override the PC defaults.
-- **On the PC:** `run.ps1` takes `-MaxFps`, `-MaxStreamSize 2560x1440`, `-Codec auto|h264|hevc`,
+  codec (Auto / H.264 / HEVC / VP9), bitrate, encoder quality, full-range colour, sharp refresh,
+  connection, shortcut dock and debug stats. Choices are remembered and override the PC defaults.
+- **On the PC:** `run.ps1` takes `-MaxFps`, `-MaxStreamSize 2560x1440`, `-Codec auto|h264|hevc|vp9`,
   `-BitrateKbps`, `-Transport`, and `-Install`. The agent takes the same host options through
   `.\scripts\install-autostart.ps1 -HostArgs '--codec hevc --max-fps 60'`.
 - Defaults live in `host/src/Server.h` (`ServeOptions`); the app's mode list is in

@@ -24,6 +24,7 @@
 #include "encode/AdaptiveBitrate.h"
 #include "encode/AnnexB.h"
 #include "encode/MfH264Encoder.h"
+#include "encode/Vp9Header.h"
 #include "input/Shortcuts.h"
 #include "input/TouchInjector.h"
 #include "media/MediaControls.h"
@@ -81,13 +82,14 @@ struct Pipeline
     UINT height = 0;
     UINT streamWidth = 0; // encoded size
     UINT streamHeight = 0;
-    bool hevc = false;
+    encode::VideoCodec codec = encode::VideoCodec::H264;
+    bool fullRange = false; // YCbCr 0-255 (CONFIG tells the client)
     uint16_t rotation = 0; // clockwise degrees the client applies (CONFIG)
     UINT fps = 60;
 
     // `monitorIndex`: which virtual monitor this session streams (VirtualDisplay::Index()).
-    HRESULT Initialize(const ServeOptions& options, bool preferHevc, unsigned monitorIndex, unsigned bitrateKbps,
-                       unsigned quality)
+    HRESULT Initialize(const ServeOptions& options, encode::VideoCodec preferredCodec, unsigned monitorIndex,
+                       unsigned bitrateKbps, unsigned quality, bool wantFullRange)
     {
         encoder->Shutdown();
         device.Reset();
@@ -148,7 +150,7 @@ struct Pipeline
         streamWidth = static_cast<UINT>(width * scale) & ~1u;
         streamHeight = static_cast<UINT>(height * scale) & ~1u;
 
-        hr = composer.Initialize(device.Get(), width, height, streamWidth, streamHeight, rotation);
+        hr = composer.Initialize(device.Get(), width, height, streamWidth, streamHeight, rotation, wantFullRange);
         if (FAILED(hr))
         {
             return hr;
@@ -157,24 +159,26 @@ struct Pipeline
         DXGI_ADAPTER_DESC1 adapterDesc{};
         output.adapter->GetDesc1(&adapterDesc);
         encode::EncoderSettings settings{streamWidth, streamHeight, fps, bitrateKbps};
-        settings.hevc = preferHevc;
+        settings.codec = preferredCodec;
         settings.qualityVsSpeed = quality;
+        settings.fullRange = wantFullRange;
         adapterLuid = adapterDesc.AdapterLuid;
         hr = encoder->Initialize(device.Get(), adapterDesc.AdapterLuid, settings);
-        if (FAILED(hr) && preferHevc)
+        if (FAILED(hr) && preferredCodec != encode::VideoCodec::H264)
         {
-            Log(L"pipeline: HEVC encoder unavailable (0x%08lX), using H.264", Hr(hr));
-            settings.hevc = false;
+            Log(L"pipeline: %s encoder unavailable (0x%08lX), using H.264", encode::CodecName(preferredCodec), Hr(hr));
+            settings.codec = encode::VideoCodec::H264;
             hr = encoder->Initialize(device.Get(), adapterDesc.AdapterLuid, settings);
         }
         if (FAILED(hr))
         {
             return hr;
         }
-        hevc = settings.hevc;
-        Log(L"pipeline: %s %ux%u@%u -> stream %ux%u %s, rotation %u, encoder \"%s\"", output.deviceName.c_str(),
-            width, height, fps, streamWidth, streamHeight, hevc ? L"HEVC" : L"H.264", rotation,
-            encoder->Name().c_str());
+        codec = settings.codec;
+        fullRange = wantFullRange;
+        Log(L"pipeline: %s %ux%u@%u -> stream %ux%u %s%s, rotation %u, encoder \"%s\"", output.deviceName.c_str(),
+            width, height, fps, streamWidth, streamHeight, encode::CodecName(codec), fullRange ? L" full range" : L"",
+            rotation, encoder->Name().c_str());
         return S_OK;
     }
 };
@@ -332,11 +336,51 @@ class PreciseSleeper
     HANDLE m_timer;
 };
 
+protocol::Codec WireCodec(encode::VideoCodec codec)
+{
+    switch (codec)
+    {
+    case encode::VideoCodec::Hevc:
+        return protocol::Codec::Hevc;
+    case encode::VideoCodec::Vp9:
+        return protocol::Codec::Vp9;
+    default:
+        return protocol::Codec::H264;
+    }
+}
+
+// The codec for a client: `--codec` if the client offers it, else HEVC, H.264, VP9 in that order.
+// A client that wants one codec (the user's pick) offers only that one.
+encode::VideoCodec PickCodec(uint32_t clientMask, const std::wstring& option)
+{
+    const bool h264 = clientMask & protocol::kCodecMaskH264;
+    const bool hevc = clientMask & protocol::kCodecMaskHevc;
+    const bool vp9 = clientMask & protocol::kCodecMaskVp9;
+    if (option == L"h264" && h264)
+    {
+        return encode::VideoCodec::H264;
+    }
+    if (option == L"vp9" && vp9)
+    {
+        return encode::VideoCodec::Vp9;
+    }
+    if (hevc)
+    {
+        return encode::VideoCodec::Hevc;
+    }
+    return h264 ? encode::VideoCodec::H264 : encode::VideoCodec::Vp9;
+}
+
 bool SendConfig(transport::Connection& conn, const Pipeline& p, unsigned bitrateKbps)
 {
-    protocol::Config config{protocol::kVersion, p.hevc ? protocol::Codec::Hevc : protocol::Codec::H264,
+    protocol::Config config{protocol::kVersion,
+                            WireCodec(p.codec),
                             static_cast<uint16_t>(p.streamWidth),
-                            static_cast<uint16_t>(p.streamHeight), p.fps * 1000, bitrateKbps, p.rotation};
+                            static_cast<uint16_t>(p.streamHeight),
+                            p.fps * 1000,
+                            bitrateKbps,
+                            p.rotation,
+                            p.fullRange};
     const auto payload = protocol::SerializeConfig(config);
     return conn.Send(MessageType::Config, 0, NowMicros(), payload);
 }
@@ -358,12 +402,13 @@ struct EncoderControl
     bool adaptive = false;
     unsigned kbps = 0;
     unsigned quality = 0;
+    uint8_t flags = 0; // protocol::encoder_flags the user wants
     std::atomic<bool> changed{false};
 
     protocol::EncoderState State()
     {
         std::lock_guard lock(mutex);
-        return {kbps, adaptive, static_cast<uint8_t>(quality)};
+        return {kbps, adaptive, static_cast<uint8_t>(quality), flags};
     }
 };
 
@@ -642,9 +687,10 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
         return;
     }
     const auto hello = protocol::ParseHello(payload);
-    if (!hello || !(hello->codecs & (protocol::kCodecMaskH264 | protocol::kCodecMaskHevc)))
+    if (!hello ||
+        !(hello->codecs & (protocol::kCodecMaskH264 | protocol::kCodecMaskHevc | protocol::kCodecMaskVp9)))
     {
-        Log(L"session: unsupported client (bad HELLO or no H.264)");
+        Log(L"session: unsupported client (bad HELLO or no codec in common)");
         conn.Send(MessageType::Bye, 0, NowMicros(), {});
         return;
     }
@@ -729,13 +775,16 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
     control.adaptive = fixedKbpsFor(hello->bitrateKbps) == 0;
     control.kbps = control.adaptive ? kAdaptiveStartKbps : fixedKbpsFor(hello->bitrateKbps);
     control.quality = qualityFor(hello->encoderQuality);
+    control.flags = hello->encoderFlags;
     encode::AdaptiveBitrate abr(control.kbps, abrLimits);
     SentFrames sentFrames;
     EncoderSwap encoderSwap;
     unsigned appliedKbps = control.kbps;
     unsigned appliedQuality = control.quality;
+    bool sharpRefresh = (control.flags & protocol::encoder_flags::kSharpRefresh) != 0;
     Log(L"session: bitrate %s%.1f Mbit/s, quality %u", control.adaptive ? L"adaptive from " : L"",
         appliedKbps / 1000.0, appliedQuality);
+    Pipeline pipeline;
     // What the encoder runs at now (the wanted values may still be on their way in).
     const auto sendEncoderState = [&] {
         bool adaptive = false;
@@ -743,15 +792,15 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
             std::lock_guard lock(control.mutex);
             adaptive = control.adaptive;
         }
-        const protocol::EncoderState state{appliedKbps, adaptive, static_cast<uint8_t>(appliedQuality)};
+        const uint8_t flags = static_cast<uint8_t>((pipeline.fullRange ? protocol::encoder_flags::kFullRange : 0) |
+                                                   (sharpRefresh ? protocol::encoder_flags::kSharpRefresh : 0));
+        const protocol::EncoderState state{appliedKbps, adaptive, static_cast<uint8_t>(appliedQuality), flags};
         return conn.Send(MessageType::EncoderState, 0, NowMicros(), protocol::SerializeEncoderState(state));
     };
 
-    Pipeline pipeline;
-    const bool clientHevc = (hello->codecs & protocol::kCodecMaskHevc) != 0;
-    const bool clientH264 = (hello->codecs & protocol::kCodecMaskH264) != 0;
-    const bool preferHevc = clientHevc && (options.codec != L"h264" || !clientH264);
-    HRESULT hr = pipeline.Initialize(options, preferHevc, display.Index(), appliedKbps, appliedQuality);
+    const encode::VideoCodec preferredCodec = PickCodec(hello->codecs, options.codec);
+    HRESULT hr = pipeline.Initialize(options, preferredCodec, display.Index(), appliedKbps, appliedQuality,
+                                     (control.flags & protocol::encoder_flags::kFullRange) != 0);
     if (FAILED(hr))
     {
         Log(L"session: pipeline init failed 0x%08lX", Hr(hr));
@@ -874,6 +923,7 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
                     control.adaptive = fixedKbps == 0;
                     control.kbps = control.adaptive ? abr.TargetKbps() : fixedKbps;
                     control.quality = qualityFor(e->quality);
+                    control.flags = e->flags;
                     control.changed = true;
                     Log(L"session: client set bitrate %s%.1f Mbit/s, quality %u",
                         control.adaptive ? L"adaptive from " : L"", control.kbps / 1000.0, control.quality);
@@ -934,8 +984,21 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
 
     FrameTimes times;
     auto sendEncoded = [&](const encode::EncodedFrame& frame, uint8_t extraFlags = 0) {
-        auto split = annexb::SeparateParameterSets(frame.data,
-                                                   pipeline.hevc ? annexb::Codec::Hevc : annexb::Codec::H264);
+        annexb::SplitAccessUnit split;
+        if (pipeline.codec == encode::VideoCodec::Vp9)
+        {
+            split.frame = frame.data; // self-contained: keyframes carry their own headers
+            if (pipeline.fullRange && frame.keyframe)
+            {
+                vp9::MarkFullRange(split.frame); // the encoder writes studio range regardless
+            }
+        }
+        else
+        {
+            split = annexb::SeparateParameterSets(frame.data, pipeline.codec == encode::VideoCodec::Hevc
+                                                                  ? annexb::Codec::Hevc
+                                                                  : annexb::Codec::H264);
+        }
         if (!split.codecConfig.empty() && split.codecConfig != lastCodecConfig)
         {
             if (!conn.Send(MessageType::VideoFrame, protocol::video_flags::kCodecConfig, frame.timestampUs,
@@ -961,6 +1024,41 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
         return true;
     };
 
+    // Rebuilds capture, conversion and encoder (after ACCESS_LOST, or for a new color range) and
+    // tells the client when the stream it decodes changed. False if the connection is gone.
+    const auto rebuildPipeline = [&](bool fullRange) {
+        const UINT oldWidth = pipeline.width;
+        const UINT oldHeight = pipeline.height;
+        const UINT oldFps = pipeline.fps;
+        const uint16_t oldRotation = pipeline.rotation;
+        const auto oldCodec = pipeline.codec;
+        const bool oldRange = pipeline.fullRange;
+        while (!stop && FAILED(pipeline.Initialize(options, preferredCodec, display.Index(), appliedKbps,
+                                                   appliedQuality, fullRange)))
+        {
+            Sleep(250);
+        }
+        haveFrame = false;
+        lastCodecConfig.clear();
+        sentFrames.Clear();
+        streamRebuilt = true;
+        touch.SetTarget(pipeline.desktopRect);
+        if (pipeline.width == oldWidth && pipeline.height == oldHeight && pipeline.fps == oldFps &&
+            pipeline.rotation == oldRotation && pipeline.codec == oldCodec && pipeline.fullRange == oldRange)
+        {
+            return true;
+        }
+        return SendConfig(conn, pipeline, appliedKbps) && sendEncoderState();
+    };
+
+    // Sharp refresh: once the screen has been still for a moment, encode the last image again a few
+    // times. Encoders code the difference to their own (lossy) copy of it, so each pass adds back
+    // detail that the frame's bit budget had to drop; nothing is sent while things move.
+    constexpr uint64_t kSharpRefreshIdleUs = 120'000;
+    constexpr int kSharpRefreshFrames = 3;
+    uint64_t lastRealFrameUs = 0;
+    int refreshesLeft = 0;
+
     PreciseSleeper sleeper;
     uint64_t nextFrameUs = 0;
 
@@ -979,6 +1077,19 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
         if (!encoderSwap.Busy() && control.changed.exchange(false))
         {
             const auto want = control.State();
+            sharpRefresh = (want.flags & protocol::encoder_flags::kSharpRefresh) != 0;
+            const bool wantFullRange = (want.flags & protocol::encoder_flags::kFullRange) != 0;
+            if (wantFullRange != pipeline.fullRange)
+            {
+                // Conversion, encoder and the client's decoder all change: rebuild like a mode change.
+                Log(L"session: switching to %s range", wantFullRange ? L"full" : L"limited");
+                if (!rebuildPipeline(wantFullRange))
+                {
+                    break;
+                }
+                control.changed = true; // then bitrate/quality, if they changed too
+                continue;
+            }
             if (want.bitrateKbps != appliedKbps || want.quality != appliedQuality)
             {
                 auto settings = pipeline.encoder->Settings();
@@ -1050,10 +1161,40 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
             }
         }
 
+        const uint64_t refreshDueUs =
+            lastRealFrameUs + kSharpRefreshIdleUs +
+            static_cast<uint64_t>(kSharpRefreshFrames - refreshesLeft) * (1'000'000 / std::max(1u, pipeline.fps));
+        const bool refreshPending = sharpRefresh && haveFrame && refreshesLeft > 0;
+        const uint64_t waitNowUs = NowMicros();
+        const UINT waitMs = !refreshPending          ? 100
+                            : refreshDueUs <= waitNowUs ? 0
+                                                        : static_cast<UINT>(std::min<uint64_t>(100, (refreshDueUs - waitNowUs + 999) / 1000));
+
         capture::Frame frame;
-        hr = pipeline.duplicator.AcquireFrame(100, frame);
+        hr = pipeline.duplicator.AcquireFrame(waitMs, frame);
         if (hr == DXGI_ERROR_WAIT_TIMEOUT)
         {
+            if (refreshPending && NowMicros() >= refreshDueUs)
+            {
+                --refreshesLeft;
+                ComPtr<ID3D11Texture2D> nv12;
+                if (SUCCEEDED(pipeline.composer.ConvertLast(&nv12)) &&
+                    SUCCEEDED(pipeline.encoder->Encode(nv12.Get(), NowMicros(), encoded)))
+                {
+                    size_t bytes = 0;
+                    for (const auto& f : encoded)
+                    {
+                        bytes += f.data.size();
+                        // REPEAT: decoded like any frame, left out of FRAME_STATS latency.
+                        if (!sendEncoded(f, protocol::video_flags::kRepeat))
+                        {
+                            stop = true;
+                        }
+                    }
+                    Log(L"sharp refresh %d/%d: %zu bytes", kSharpRefreshFrames - refreshesLeft, kSharpRefreshFrames,
+                        bytes);
+                }
+            }
             stats.MaybeLog();
             continue;
         }
@@ -1061,27 +1202,9 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
         {
             // ACCESS_LOST: mode change, lock screen, UAC, GPU reset. Rebuild everything.
             Log(L"capture: 0x%08lX, reinitializing", Hr(hr));
-            const UINT oldWidth = pipeline.width;
-            const UINT oldHeight = pipeline.height;
-            const UINT oldFps = pipeline.fps;
-            const uint16_t oldRotation = pipeline.rotation;
-            while (!stop && FAILED(pipeline.Initialize(options, preferHevc, display.Index(), appliedKbps,
-                                                       appliedQuality)))
+            if (!rebuildPipeline(pipeline.fullRange))
             {
-                Sleep(250);
-            }
-            haveFrame = false;
-            lastCodecConfig.clear();
-            sentFrames.Clear();
-            streamRebuilt = true;
-            touch.SetTarget(pipeline.desktopRect);
-            if (pipeline.width != oldWidth || pipeline.height != oldHeight || pipeline.fps != oldFps ||
-                pipeline.rotation != oldRotation)
-            {
-                if (!SendConfig(conn, pipeline, appliedKbps))
-                {
-                    break;
-                }
+                break;
             }
             continue;
         }
@@ -1126,6 +1249,8 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
                 break;
             }
         }
+        lastRealFrameUs = NowMicros();
+        refreshesLeft = kSharpRefreshFrames;
 
         if (options.repeatFrames && !stop && !encoded.empty())
         {

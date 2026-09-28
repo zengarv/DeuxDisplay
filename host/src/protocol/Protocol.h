@@ -52,10 +52,19 @@ enum class Codec : uint8_t
 {
     H264 = 0,
     Hevc = 1,
+    Vp9 = 2,
 };
 
 inline constexpr uint32_t kCodecMaskH264 = 1u << 0;
 inline constexpr uint32_t kCodecMaskHevc = 1u << 1;
+inline constexpr uint32_t kCodecMaskVp9 = 1u << 2;
+
+// HELLO `encoder_flags` / ENCODER_SETTINGS `flags`: stream options the user picked.
+namespace encoder_flags
+{
+inline constexpr uint8_t kFullRange = 1u << 0;    // 0-255 YCbCr instead of 16-235
+inline constexpr uint8_t kSharpRefresh = 1u << 1; // refine a still screen with extra frames
+} // namespace encoder_flags
 
 struct Header
 {
@@ -93,6 +102,7 @@ struct Hello
     // Optional encoder settings picked by the user (see EncoderSettings).
     uint32_t bitrateKbps = 0;                  // 0 = host decides
     uint8_t encoderQuality = kQualityHostDecides; // 0 fastest .. 100 best
+    uint8_t encoderFlags = 0;                     // encoder_flags
     // Optional: stream sizes (landscape) and frame rates the client can show; the virtual monitor
     // offers every combination, so the user can switch modes in Windows or in the app.
     std::vector<Size> sizes;
@@ -110,6 +120,7 @@ struct Config
     // Optional: degrees clockwise (0/90/180/270) the client rotates each frame to show it upright.
     // Frames are always encoded in the display's native (landscape) scan-out orientation.
     uint16_t rotationDegrees = 0;
+    bool fullRange = false; // YCbCr 0-255 (else 16-235); BT.709 either way
 };
 
 // ORIENTATION payload: the desktop orientation the client wants, in degrees clockwise from the
@@ -199,6 +210,7 @@ struct EncoderSettings
 {
     uint32_t bitrateKbps = 0;                     // 0 = host decides (adaptive by default)
     uint8_t quality = kQualityHostDecides;        // 0 fastest .. 100 best, 0xFF = host decides
+    uint8_t flags = 0;                            // encoder_flags
 
     bool operator==(const EncoderSettings&) const = default;
 };
@@ -226,6 +238,7 @@ struct EncoderState
     uint32_t bitrateKbps = 0;
     bool adaptive = false; // the host adjusts the bitrate itself
     uint8_t quality = 0;   // 0 fastest .. 100 best
+    uint8_t flags = 0;     // encoder_flags in effect
 
     bool operator==(const EncoderState&) const = default;
 };

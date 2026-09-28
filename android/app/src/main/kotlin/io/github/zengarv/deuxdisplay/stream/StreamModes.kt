@@ -9,7 +9,7 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /** Video codec picked by the user. AUTO lets the host choose (it prefers HEVC when both work). */
-enum class StreamCodec { AUTO, H264, HEVC }
+enum class StreamCodec { AUTO, H264, HEVC, VP9 }
 
 /** Stream format picked by the user. 0 in a field means the host decides (the default). */
 data class StreamMode(
@@ -32,6 +32,7 @@ data class StreamMode(
     fun codecMask(hevcDecoder: Boolean, hevcRated: Boolean): Int = when (codec) {
         StreamCodec.H264 -> Protocol.CODEC_MASK_H264
         StreamCodec.HEVC -> if (hevcDecoder) Protocol.CODEC_MASK_HEVC else Protocol.CODEC_MASK_H264
+        StreamCodec.VP9 -> Protocol.CODEC_MASK_VP9 // only offered with a hardware VP9 decoder
         StreamCodec.AUTO ->
             Protocol.CODEC_MASK_H264 or (if (hevcDecoder && hevcRated) Protocol.CODEC_MASK_HEVC else 0)
     }

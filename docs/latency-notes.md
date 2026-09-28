@@ -207,6 +207,31 @@ Transport: TCP echo (TCP_NODELAY on both ends, 60 Hz), adb tunnel vs the tablet'
   way at p95) and large frames (~2 ms). Not worth losing adb's plug and play for (Android apps
   can't turn tethering on, and it shares the tablet's internet with the PC).
 
+### VP9, full range and sharp refresh (2026-09-28)
+
+OnePlus Pad Go, USB, 2408×1720 @ 90 Hz stream, adaptive bitrate, the scripted animation. Two
+alternating rounds per codec.
+
+| Codec | inside decoder | present→decoded p50 | → on screen p50 / p95 |
+|-------|---------------:|--------------------:|----------------------:|
+| HEVC (`c2.mtk.hevc.decoder`) | 28.6–28.9 ms | 49.6–50.2 ms | 52.5–53.5 / 63.6–69.0 ms |
+| VP9 (`c2.mtk.vp9.decoder`)   | 35.9–36.0 ms | 55.3–56.0 ms | 58.8–59.1 / 77.6–78.4 ms |
+
+- VP9 decodes ~7 ms slower on this tablet, so HEVC stays the default. It is 4:2:0 only: the Intel
+  VP9 MFT lists NV12 as its only input even for profile 1, so it can't carry 4:4:4 (the tablet's
+  VP9 decoder does advertise profile 1). On the animation it used 0.5–0.9 Mbit/s against HEVC's
+  ~20: quality not yet compared.
+- Hardware profiles on the tablet: H.264 Baseline/Main/High, HEVC Main, VP9 profiles 0 and 1.
+  No H.264 High 4:4:4 or HEVC RExt, so no 4:4:4 through H.264/HEVC.
+- Full range: H.264 and HEVC signal `video_full_range_flag` from `MF_MT_VIDEO_NOMINAL_RANGE`;
+  Intel's VP9 MFT writes studio range regardless, so the host sets the keyframe's `color_range`
+  bit. The tablet shows GitHub's `#0d1117` background as (14, 17, 22). No cost.
+- Sharp refresh (1280×800 probe, 30 Mbit/s): the 3 passes after 120 ms of stillness carried
+  4–79 KB while the image still needed detail and 30–140 bytes once it had converged. Not yet
+  measured on the tablet's screen. A pass encodes on the frame loop (~5–12 ms), so a frame that
+  arrives mid-pass waits for it.
+- No CBR filler: H.264/HEVC streams are all slice data (no filler NAL units).
+
 ### Open leads for M4
 - Encode takes ~20 ms at 6.4 MP even on the fastest preset, with no input wait. Next suspects:
   GPU clock ramp-up under bursty load, MFT internal async depth

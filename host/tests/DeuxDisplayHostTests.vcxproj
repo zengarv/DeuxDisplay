@@ -46,6 +46,7 @@
     <ClCompile Include="AdbTests.cpp" />
     <ClCompile Include="AdaptiveBitrateTests.cpp" />
     <ClCompile Include="ModeListTests.cpp" />
+    <ClCompile Include="Vp9HeaderTests.cpp" />
     <ClCompile Include="..\src\encode\AdaptiveBitrate.cpp" />
     <ClCompile Include="..\src\adb\AdbProtocol.cpp" />
     <ClCompile Include="..\src\input\TouchTracker.cpp" />

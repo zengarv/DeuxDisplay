@@ -18,9 +18,10 @@ class FrameComposer
   public:
     // Desktop frames are width x height (scan-out orientation); the NV12 output (what gets
     // encoded) is outWidth x outHeight. `rotation` is the clockwise angle the client applies to
-    // show frames upright (see Rotation.h); it's used to place the pointer.
+    // show frames upright (see Rotation.h); it's used to place the pointer. `fullRange`: NV12 in
+    // 0-255 instead of 16-235 (BT.709 either way).
     HRESULT Initialize(ID3D11Device* device, UINT width, UINT height, UINT outWidth, UINT outHeight,
-                       uint16_t rotation = 0);
+                       uint16_t rotation = 0, bool fullRange = false);
 
     // Returns an NV12 texture from a small ring; it stays valid until kRingSize more calls.
     HRESULT Compose(ID3D11Texture2D* desktop, const capture::PointerState& pointer, ID3D11Texture2D** nv12);
@@ -43,6 +44,7 @@ class FrameComposer
     UINT m_outWidth = 0;
     UINT m_outHeight = 0;
     uint16_t m_rotation = 0;
+    bool m_fullRange = false;
 
     Microsoft::WRL::ComPtr<ID3D11Texture2D> m_compose;
     Microsoft::WRL::ComPtr<ID3D11RenderTargetView> m_composeRtv;

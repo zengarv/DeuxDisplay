@@ -11,6 +11,7 @@ int main()
     RunAdbTests();
     RunAdaptiveBitrateTests();
     RunModeListTests();
+    RunVp9HeaderTests();
 
     if (g_failures != 0)
     {

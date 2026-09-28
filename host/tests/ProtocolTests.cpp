@@ -109,12 +109,13 @@ void HelloRoundTrip()
 
 void ConfigRoundTrip()
 {
-    Config c{kVersion, Codec::H264, 2408, 1720, 60000, 20000, 90};
+    Config c{kVersion, Codec::Vp9, 2408, 1720, 60000, 20000, 90, true};
     auto bytes = SerializeConfig(c);
-    CHECK(bytes.size() == 18);
+    CHECK(bytes.size() == 20);
+    CHECK(bytes[2] == 2 && bytes[18] == 1); // codec VP9, flags: full range
     auto p = ParseConfig(bytes);
     CHECK(p.has_value());
-    CHECK(p->codec == Codec::H264 && p->widthPx == 2408 && p->heightPx == 1720);
+    CHECK(p->codec == Codec::Vp9 && p->widthPx == 2408 && p->heightPx == 1720 && p->fullRange);
     CHECK(p->fpsMilliHz == 60000 && p->bitrateKbps == 20000);
     CHECK(p->rotationDegrees == 90);
 
@@ -151,9 +152,13 @@ void EncoderMessagesRoundTrip()
     CHECK(ParseEncoderSettings(settingsBytes) == settings);
     CHECK(!ParseEncoderSettings(std::span(settingsBytes).first(5)).has_value());
 
-    const EncoderState state{62000, true, 0};
+    const EncoderSettings flagged{0, 255, encoder_flags::kFullRange | encoder_flags::kSharpRefresh};
+    CHECK((SerializeEncoderSettings(flagged) == std::vector<uint8_t>{0, 0, 0, 0, 255, 3}));
+    CHECK(ParseEncoderSettings(SerializeEncoderSettings(flagged)) == flagged);
+
+    const EncoderState state{62000, true, 0, encoder_flags::kSharpRefresh};
     const auto stateBytes = SerializeEncoderState(state);
-    CHECK((stateBytes == std::vector<uint8_t>{0x30, 0xF2, 0x00, 0x00, 1, 0, 0, 0}));
+    CHECK((stateBytes == std::vector<uint8_t>{0x30, 0xF2, 0x00, 0x00, 5, 0, 0, 0}));
     CHECK(ParseEncoderState(stateBytes) == state);
     CHECK(!ParseEncoderState(std::span(stateBytes).first(7)).has_value());
 }

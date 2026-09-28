@@ -13,7 +13,7 @@ namespace dd::render
 {
 
 HRESULT FrameComposer::Initialize(ID3D11Device* device, UINT width, UINT height, UINT outWidth, UINT outHeight,
-                                  uint16_t rotation)
+                                  uint16_t rotation, bool fullRange)
 {
     *this = FrameComposer{};
     m_device = device;
@@ -23,6 +23,7 @@ HRESULT FrameComposer::Initialize(ID3D11Device* device, UINT width, UINT height,
     m_outWidth = outWidth;
     m_outHeight = outHeight;
     m_rotation = rotation;
+    m_fullRange = fullRange;
 
     D3D11_TEXTURE2D_DESC desc{};
     desc.Width = width;
@@ -179,12 +180,13 @@ HRESULT FrameComposer::InitVideoProcessor()
         }
     }
 
-    // Full-range RGB in, BT.709 limited-range YCbCr out (what the encoder signals in the VUI).
+    // Full-range RGB in, BT.709 YCbCr out in the range the encoder signals in the bitstream.
     ComPtr<ID3D11VideoContext1> videoContext1;
     if (SUCCEEDED(m_videoContext.As(&videoContext1)))
     {
         videoContext1->VideoProcessorSetStreamColorSpace1(m_vp.Get(), 0, DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709);
-        videoContext1->VideoProcessorSetOutputColorSpace1(m_vp.Get(), DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P709);
+        videoContext1->VideoProcessorSetOutputColorSpace1(
+            m_vp.Get(), m_fullRange ? DXGI_COLOR_SPACE_YCBCR_FULL_G22_LEFT_P709 : DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P709);
     }
     else
     {
@@ -193,7 +195,8 @@ HRESULT FrameComposer::InitVideoProcessor()
         m_videoContext->VideoProcessorSetStreamColorSpace(m_vp.Get(), 0, &in);
         D3D11_VIDEO_PROCESSOR_COLOR_SPACE out{};
         out.YCbCr_Matrix = 1;
-        out.Nominal_Range = D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_16_235;
+        out.Nominal_Range =
+            m_fullRange ? D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_0_255 : D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_16_235;
         m_videoContext->VideoProcessorSetOutputColorSpace(m_vp.Get(), &out);
     }
     m_videoContext->VideoProcessorSetStreamFrameFormat(m_vp.Get(), 0, D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE);

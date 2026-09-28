@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.PowerManager
 import android.widget.TextView
 import io.github.zengarv.deuxdisplay.protocol.Codec
+import io.github.zengarv.deuxdisplay.protocol.Protocol
 import io.github.zengarv.deuxdisplay.stream.StreamModes
 import io.github.zengarv.deuxdisplay.stream.StreamStats
 import java.util.Locale
@@ -76,14 +77,22 @@ class StatsOverlay(private val activity: Activity, private val stats: StreamStat
 
         val streamHz = config?.let { (it.fpsMilliHz / 1000.0).roundToInt() } ?: 0
         if (config != null) {
-            val codec = if (config.codec == Codec.HEVC) "HEVC" else "H.264"
+            val codec = when (config.codec) {
+                Codec.HEVC -> "HEVC"
+                Codec.VP9 -> "VP9"
+                Codec.H264 -> "H.264"
+            }
             val rotation = if (config.rotationDegrees != 0) " · rot ${config.rotationDegrees}°" else ""
             lines += "$codec ${config.widthPx}×${config.heightPx} @ $streamHz fps$rotation"
             // The live encoder target: the adaptive controller moves it (ENCODER_STATE).
             val encoder = stats.encoder
             val target = fmt((encoder?.bitrateKbps ?: config.bitrateKbps) / 1000.0, 1)
             lines += if (encoder != null) {
-                "Encoder $target Mbps ${if (encoder.adaptive) "(adaptive)" else "(fixed)"} · quality ${encoder.quality}"
+                val options = listOfNotNull(
+                    "full range".takeIf { encoder.flags and Protocol.ENCODER_FULL_RANGE != 0 },
+                    "sharp refresh".takeIf { encoder.flags and Protocol.ENCODER_SHARP_REFRESH != 0 },
+                ).joinToString("") { " · $it" }
+                "Encoder $target Mbps ${if (encoder.adaptive) "(adaptive)" else "(fixed)"} · quality ${encoder.quality}$options"
             } else {
                 "Encoder $target Mbps"
             }
