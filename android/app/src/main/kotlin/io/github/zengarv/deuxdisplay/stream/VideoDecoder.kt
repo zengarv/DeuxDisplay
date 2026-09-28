@@ -53,6 +53,11 @@ class VideoDecoder(
     @Volatile
     private var running = true
     private var awaitingKeyframe = true
+
+    // Parameter sets (SPS/PPS) not yet queued. The host sends them only when they change, so if
+    // they're dropped (slow OMX decoders have no input buffer for the first frames) keyframes
+    // alone never start the decoder: they're queued again ahead of the next keyframe.
+    private var pendingConfig: ByteArray? = null
     private val renderThread: Thread
     private val callbackThread = HandlerThread("DeuxDisplay-rendered").apply { start() }
 
@@ -90,6 +95,15 @@ class VideoDecoder(
             stats?.onFrameSkipped()
             return // decoding a P-frame without its reference would only show garbage
         }
+        if (isConfig) {
+            pendingConfig = data.copyOf(length)
+        } else if (isKey) {
+            pendingConfig?.let { config ->
+                Log.i(TAG, "resending parameter sets the decoder never got")
+                submit(config, config.size, Protocol.FLAG_CODEC_CONFIG, ptsUs, receivedUs)
+                if (pendingConfig != null) return // dropped again; a keyframe is on its way
+            }
+        }
         try {
             val index = codec.dequeueInputBuffer(INPUT_TIMEOUT_US)
             if (index < 0) {
@@ -117,6 +131,7 @@ class VideoDecoder(
                 timings[ptsUs] = longArrayOf(receivedUs, 0L)
             }
             codec.queueInputBuffer(index, 0, length, ptsUs, codecFlags)
+            if (isConfig) pendingConfig = null
             if (!isConfig) inFlight.incrementAndGet()
             if (isKey) awaitingKeyframe = false
         } catch (e: MediaCodec.CodecException) {
