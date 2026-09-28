@@ -31,14 +31,23 @@ inline constexpr DWORD kIoctlPlug = CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_
 inline constexpr DWORD kIoctlUnplug = CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_BUFFERED, FILE_ANY_ACCESS);
 
 // PLUG replaces the caller's monitor, if any; UNPLUG removes only the caller's monitor.
-inline constexpr uint32_t kPlugRequestVersion = 1;
+// Version 2 added the mode list; host and driver must match.
+inline constexpr uint32_t kPlugRequestVersion = 2;
 
 // Monitors the adapter can show at once. Each gets its own connector index and EDID product
 // code, so the host tells them apart by monitor hardware ID (MONITOR\DXD0001, DXD0002, ...).
 inline constexpr uint32_t kMaxMonitors = 4;
 inline constexpr size_t kMaxRefreshRates = 4;
+inline constexpr size_t kMaxModes = 32;
 
 #pragma pack(push, 1)
+struct PlugMode
+{
+    uint16_t width = 0; // landscape pixels; must be even
+    uint16_t height = 0;
+    uint16_t refreshHz = 0;
+};
+
 struct PlugRequest
 {
     uint32_t version = kPlugRequestVersion;
@@ -47,6 +56,10 @@ struct PlugRequest
     uint16_t widthMm = 0;
     uint16_t heightMm = 0;
     uint16_t refreshHz[kMaxRefreshRates] = {}; // [0] is preferred; 0 = unused
+    // Every mode Windows may run the monitor at (Settings > Display lists them), preferred
+    // first: width x height @ refreshHz[0]. refreshHz[1] is the EDID's second timing.
+    uint16_t modeCount = 0;
+    PlugMode modes[kMaxModes] = {};
 };
 
 // Optional PLUG output. A driver that predates multiple monitors returns no bytes: index 0.
@@ -56,17 +69,34 @@ struct PlugResult
 };
 #pragma pack(pop)
 
+inline bool IsValidMode(uint16_t width, uint16_t height, uint16_t hz)
+{
+    return width >= 640 && height >= 480 && width <= 7680 && height <= 4320 && !(width & 1) && !(height & 1) &&
+           hz >= 24 && hz <= 240;
+}
+
 // Validation shared by driver and host so both agree on what's acceptable.
 inline bool IsValidPlugRequest(const PlugRequest& r)
 {
-    if (r.version != kPlugRequestVersion || r.width < 640 || r.height < 480 || r.width > 7680 ||
-        r.height > 4320 || (r.width & 1) || (r.height & 1) || r.refreshHz[0] == 0)
+    if (r.version != kPlugRequestVersion || !IsValidMode(r.width, r.height, r.refreshHz[0]))
     {
         return false;
     }
     for (uint16_t hz : r.refreshHz)
     {
         if (hz != 0 && (hz < 24 || hz > 240))
+        {
+            return false;
+        }
+    }
+    if (r.modeCount == 0 || r.modeCount > kMaxModes || r.modes[0].width != r.width || r.modes[0].height != r.height ||
+        r.modes[0].refreshHz != r.refreshHz[0])
+    {
+        return false;
+    }
+    for (uint16_t i = 0; i < r.modeCount; ++i)
+    {
+        if (!IsValidMode(r.modes[i].width, r.modes[i].height, r.modes[i].refreshHz))
         {
             return false;
         }

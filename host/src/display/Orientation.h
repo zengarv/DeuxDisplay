@@ -12,4 +12,9 @@ namespace dd
 // refused the change (logged).
 bool SetDisplayOrientation(const std::wstring& deviceName, uint16_t degrees);
 
+// Sets a display's resolution and refresh rate like Settings > Display, keeping its orientation.
+// `width` x `height` is landscape (swapped for a portrait display). Not saved either. Returns
+// false if Windows refused the mode (logged).
+bool SetDisplayMode(const std::wstring& deviceName, uint16_t width, uint16_t height, uint16_t refreshHz);
+
 } // namespace dd

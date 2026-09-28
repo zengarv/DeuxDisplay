@@ -59,9 +59,11 @@ void HelloRoundTrip()
     h.modeRefreshMilliHz = 60000;
     h.bitrateKbps = 45000;
     h.encoderQuality = 30;
+    h.sizes = {{2408, 1720}, {1806, 1290}};
+    h.rates = {90, 60, 30};
 
     auto bytes = SerializeHello(h);
-    CHECK(bytes.size() == 20 + 2 + h.deviceName.size() + 8 + 8 + 6);
+    CHECK(bytes.size() == 20 + 2 + h.deviceName.size() + 8 + 8 + 6 + 1 + 8 + 1 + 6);
     CHECK(bytes[0] == 'D' && bytes[1] == 'X' && bytes[2] == 'D' && bytes[3] == 'P');
 
     auto p = ParseHello(bytes);
@@ -74,11 +76,16 @@ void HelloRoundTrip()
     CHECK(p->xdpiMilli == 260047 && p->ydpiMilli == 260268);
     CHECK(p->modeWidthPx == 1920 && p->modeHeightPx == 1370 && p->modeRefreshMilliHz == 60000);
     CHECK(p->bitrateKbps == 45000 && p->encoderQuality == 30);
+    CHECK(p->sizes == h.sizes && p->rates == h.rates);
 
     bytes.push_back(0xAA); // appended future field must be ignored
     CHECK(ParseHello(bytes).has_value());
 
-    bytes.resize(bytes.size() - 7); // older client: requested mode but no encoder settings
+    bytes.resize(bytes.size() - 1 - 16); // no mode lists
+    auto noLists = ParseHello(bytes);
+    CHECK(noLists.has_value() && noLists->bitrateKbps == 45000 && noLists->sizes.empty() && noLists->rates.empty());
+
+    bytes.resize(bytes.size() - 6); // requested mode but no encoder settings
     auto noEncoder = ParseHello(bytes);
     CHECK(noEncoder.has_value() && noEncoder->modeWidthPx == 1920 && noEncoder->bitrateKbps == 0 &&
           noEncoder->encoderQuality == kQualityHostDecides);
@@ -123,6 +130,16 @@ void OrientationRoundTrip()
     CHECK(!ParseOrientation(SerializeOrientation(45)).has_value());
     CHECK(!ParseOrientation(SerializeOrientation(360)).has_value());
     CHECK(!ParseOrientation({}).has_value());
+}
+
+void DisplayModeRoundTrip()
+{
+    // Byte layout is shared with the Android tests (ProtocolTest.kt).
+    const DisplayMode mode{1806, 1290, 90};
+    const auto bytes = SerializeDisplayMode(mode);
+    CHECK((bytes == std::vector<uint8_t>{0x0E, 0x07, 0x0A, 0x05, 90, 0, 0, 0}));
+    CHECK(ParseDisplayMode(bytes) == mode);
+    CHECK(!ParseDisplayMode(std::span(bytes).first(7)).has_value());
 }
 
 void EncoderMessagesRoundTrip()
@@ -290,6 +307,7 @@ void RunProtocolTests()
     OrientationRoundTrip();
     ActionAndMediaStateRoundTrip();
     EncoderMessagesRoundTrip();
+    DisplayModeRoundTrip();
     PingPongStatsRoundTrip();
     TouchFrameRoundTrip();
     AuthMessagesRoundTrip();

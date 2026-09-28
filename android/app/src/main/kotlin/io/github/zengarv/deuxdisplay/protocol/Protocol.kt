@@ -50,6 +50,7 @@ object MessageType {
     const val ORIENTATION: Int = 0x41
     const val ACTION: Int = 0x42
     const val ENCODER_SETTINGS: Int = 0x43
+    const val DISPLAY_MODE: Int = 0x44
 }
 
 enum class Codec(val wire: Int) {
@@ -108,11 +109,14 @@ data class Hello(
     /** Encoder picks (see [EncoderSettings]); optional on the wire. */
     val bitrateKbps: Int = 0,
     val encoderQuality: Int = Protocol.QUALITY_HOST_DECIDES,
+    /** Stream sizes (landscape) and frame rates the client can show; optional on the wire. */
+    val sizes: List<Pair<Int, Int>> = emptyList(),
+    val rates: List<Int> = emptyList(),
     val protocolVersion: Int = Protocol.VERSION,
 ) {
     fun serialize(): ByteArray {
         val name = deviceName.toByteArray(Charsets.UTF_8).let { if (it.size > 0xFFFF) it.copyOf(0xFFFF) else it }
-        return le(44 + name.size).apply {
+        return le(46 + name.size + 4 * sizes.size + 2 * rates.size).apply {
             putInt(Protocol.MAGIC)
             putShort(protocolVersion.toShort())
             putShort(widthPx.toShort())
@@ -130,6 +134,13 @@ data class Hello(
             putInt(bitrateKbps)
             put(encoderQuality.toByte())
             put(0)
+            put(sizes.size.toByte())
+            sizes.forEach { (w, h) ->
+                putShort(w.toShort())
+                putShort(h.toShort())
+            }
+            put(rates.size.toByte())
+            rates.forEach { putShort(it.toShort()) }
         }.array()
     }
 
@@ -155,9 +166,20 @@ data class Hello(
             val hasEncoder = hasMode && remaining() >= 6
             val bitrate = if (hasEncoder) int else 0
             val quality = if (hasEncoder) get().toInt() and 0xFF else Protocol.QUALITY_HOST_DECIDES
+            if (hasEncoder) get() // reserved
+            var sizes = emptyList<Pair<Int, Int>>()
+            var rates = emptyList<Int>()
+            if (remaining() >= 1) {
+                val count = get().toInt() and 0xFF
+                if (remaining() >= 4 * count + 1) {
+                    sizes = List(count) { u16() to u16() }
+                    val rateCount = get().toInt() and 0xFF
+                    if (remaining() >= 2 * rateCount) rates = List(rateCount) { u16() } else sizes = emptyList()
+                }
+            }
             Hello(
                 w, h, dpi, refresh, codecs, String(name, Charsets.UTF_8), xdpi, ydpi, modeW, modeH, modeRefresh,
-                bitrate, quality, version,
+                bitrate, quality, sizes, rates, version,
             )
         }
     }
@@ -313,6 +335,22 @@ data class EncoderSettings(val bitrateKbps: Int = 0, val quality: Int = Protocol
             val quality = get().toInt() and 0xFF
             get() // reserved
             EncoderSettings(bitrate, quality)
+        }
+    }
+}
+
+/** DISPLAY_MODE: switch the virtual monitor to this mode live; 0 in a field = the host's default. */
+data class DisplayMode(val width: Int, val height: Int, val refreshHz: Int) {
+    fun serialize(): ByteArray = le(8).apply {
+        putShort(width.toShort())
+        putShort(height.toShort())
+        putShort(refreshHz.toShort())
+        putShort(0)
+    }.array()
+
+    companion object {
+        fun parse(payload: ByteArray): DisplayMode = parsing(payload) {
+            DisplayMode(u16(), u16(), u16()).also { u16() }
         }
     }
 }

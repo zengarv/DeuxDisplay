@@ -56,23 +56,13 @@ struct CurrentMonitor
 std::mutex g_CurrentLock;
 std::array<CurrentMonitor, dd::driver::kMaxMonitors> g_Current;
 
-// Requested rates at native size (first = preferred), plus half size at 60 Hz as a
-// low-bandwidth fallback. Heights stay even for 4:2:0 video encoding.
+// The host's mode list, preferred first (the host builds it from what the client can show).
 std::vector<ModeSpec> BuildModes(const dd::driver::PlugRequest& r)
 {
     std::vector<ModeSpec> modes;
-    for (uint16_t hz : r.refreshHz)
+    for (uint16_t i = 0; i < r.modeCount; ++i)
     {
-        if (hz != 0)
-        {
-            modes.push_back({r.width, r.height, hz});
-        }
-    }
-    const DWORD halfW = (r.width / 2) & ~1u;
-    const DWORD halfH = (r.height / 2) & ~1u;
-    if (halfW >= 640 && halfH >= 480)
-    {
-        modes.push_back({halfW, halfH, 60});
+        modes.push_back({r.modes[i].width, r.modes[i].height, r.modes[i].refreshHz});
     }
     return modes;
 }

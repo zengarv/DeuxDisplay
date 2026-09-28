@@ -10,8 +10,11 @@ import kotlin.math.roundToInt
 /** Describes this device's panel for the HELLO message (landscape, as the app is locked to it). */
 object DisplayInfo {
 
-    /** [mode] is the user's stream format pick, sent so the host streams exactly that. */
-    fun hello(activity: Activity, mode: StreamMode = StreamMode()): Hello {
+    /**
+     * [mode] is the user's stream format pick, sent so the host streams exactly that. [options]
+     * are all the formats this device can show; the virtual monitor offers each of them.
+     */
+    fun hello(activity: Activity, mode: StreamMode = StreamMode(), options: List<ModeOption> = emptyList()): Hello {
         val metrics = activity.resources.displayMetrics
         var width: Int
         var height: Int
@@ -61,6 +64,8 @@ object DisplayInfo {
             modeWidthPx = if (mode.hasSize) mode.width else 0,
             modeHeightPx = if (mode.hasSize) mode.height else 0,
             modeRefreshMilliHz = mode.refreshHz * 1000,
+            sizes = options.map { it.width to it.height },
+            rates = options.flatMap { it.refreshRates }.distinct().sortedDescending(),
         )
     }
 }

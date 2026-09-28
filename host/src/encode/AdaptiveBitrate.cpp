@@ -19,6 +19,11 @@ void AdaptiveBitrate::Reset(unsigned kbps)
     m_budget = 0;
     m_increaseAfterUs = 0;
     m_decreaseAfterUs = 0;
+    m_medians.clear();
+    m_ceilingKbps = 0;
+    m_ceilingUs = 0;
+    m_reprobeAfterUs = kReprobeMinUs;
+    m_reprobeUs = 0;
 }
 
 unsigned AdaptiveBitrate::Clamp(uint64_t kbps) const

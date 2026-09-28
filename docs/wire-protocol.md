@@ -60,6 +60,7 @@ Senders must write header and payload with a single write/send call (see latency
 | `0x41` | `ORIENTATION`     | client → host    | Desktop orientation the client wants           |
 | `0x42` | `ACTION`          | client → host    | A shortcut from the client's dock              |
 | `0x43` | `ENCODER_SETTINGS`| client → host    | The user's bitrate/quality picks, applied live |
+| `0x44` | `DISPLAY_MODE`    | client → host    | Switch the virtual monitor's mode, live        |
 
 ### `HELLO` (client → host)
 
@@ -81,25 +82,38 @@ Senders must write header and payload with a single write/send call (see latency
 | 4    | `bitrate_kbps`      | *Optional.* Encoder bitrate the user picked; 0 = host decides (see `ENCODER_SETTINGS`) |
 | 1    | `encoder_quality`   | *Optional.* 0 (fastest) – 100 (best quality); `0xFF` = host decides |
 | 1    | `reserved`          | *Optional.* 0                                            |
+| 1    | `size_count`        | *Optional.* Stream sizes that follow                     |
+| 4×n  | `sizes`             | *Optional.* `u16` width, `u16` height (landscape): every stream size the client can show |
+| 1    | `rate_count`        | *Optional.* Frame rates that follow                      |
+| 2×n  | `rates`             | *Optional.* `u16` Hz: every frame rate the client can show |
 
 The host plugs a virtual monitor matching `width_px` × `height_px` at `refresh_mhz`, with a
 physical size derived from `xdpi_milli`/`ydpi_milli` (falling back to `density_dpi`), so Windows
 picks sensible scaling for any device.
 
+The virtual monitor offers **every combination** of `sizes` × `rates` (up to 32 modes), so the
+user can switch modes in Windows' Settings > Display, or from the client with `DISPLAY_MODE`,
+without a new monitor being plugged. Windows renders the desktop at the chosen mode and the host
+streams it as is (no host-side scaling; the client scales to its panel), sending `CONFIG` when it
+changes. Without the lists, only the native size at the preferred rates is offered.
+
 The `mode_*` fields let the user pick the stream format on the client. Each group is independent:
 `mode_width_px`/`mode_height_px` (both non-zero, landscape, even) or `mode_refresh_mhz` may be set
-on its own. When set, the host streams **only** that format:
+on its own. The picked mode is the monitor's preferred mode, and the host switches the monitor to
+it after plugging (Windows would otherwise restore the mode it last used for that monitor). With
+no pick, the preferred mode is the native size at `refresh_mhz` capped by `--max-fps`, and
+whatever mode Windows restores stands.
 
-- The virtual monitor exposes just the requested size and/or refresh rate, so Windows renders the
-  desktop at exactly that mode (no host-side scaling; the client scales to its panel).
-- The physical size still comes from the native `width_px`/`height_px`, so Windows scaling
+- The physical size always comes from the native `width_px`/`height_px`, so Windows scaling
   stays correct for the real panel.
-- A requested size or rate overrides the host's `--max-stream-size` / `--max-fps` limits.
+- The stream follows the monitor's mode, so a picked or Windows-chosen mode overrides the host's
+  `--max-stream-size` / `--max-fps` limits (which only shape the default).
 - A value the host can't serve (outside 640×480–7680×4320, or 24–240 Hz) is ignored with a log line.
 
 Clients only offer modes the device supports: panel sizes and refresh rates, plus scaled-down
 panel sizes the decoder accepts. The optional fields are positional: a client sending `mode_*`
-must also send `xdpi_milli`/`ydpi_milli`, and one sending the encoder fields must send `mode_*`.
+must also send `xdpi_milli`/`ydpi_milli`, one sending the encoder fields must send `mode_*`, and
+one sending the lists must send the encoder fields.
 
 ### `CONFIG` (host → client)
 
@@ -241,6 +255,19 @@ directly (no key press, so Windows shows no volume flyout).
 after `CONFIG` and then whenever it changes. A host sends it only if it accepts `ACTION`, so
 clients show their dock (and take over the volume keys) only after receiving one.
 
+### `DISPLAY_MODE` (client → host)
+
+| Size | Field        | Notes                                                  |
+|-----:|--------------|--------------------------------------------------------|
+| 2    | `width_px`   | Landscape width; 0 = the monitor's preferred width     |
+| 2    | `height_px`  | 0 = the monitor's preferred height                     |
+| 2    | `refresh_hz` | 0 = the monitor's preferred rate                       |
+| 2    | `reserved`   | 0                                                      |
+
+The host switches the virtual monitor to this mode as Windows' display settings would (keeping
+its orientation). It must be one the monitor offers (see `HELLO` `sizes`/`rates`); others are
+ignored with a log line. The stream then restarts at the new size and rate, announced by `CONFIG`.
+
 ### `ENCODER_SETTINGS` (client → host)
 
 | Size | Field          | Notes                                                           |
@@ -353,6 +380,8 @@ client                              host
   | ---- ACTION ------------------->  |
   | <--- ENCODER_STATE -------------  |   (after CONFIG, and on changes)
   | ---- ENCODER_SETTINGS --------->  |   (user moves a slider)
+  | ---- DISPLAY_MODE ------------->  |   (user picks another mode)
+  | <--- CONFIG --------------------  |   (new size/rate: also after Windows Settings)
   | ---- BYE ---------------------->  |
 ```
 

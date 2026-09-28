@@ -18,6 +18,7 @@
 #include "capture/OutputLocator.h"
 #include "common/Clock.h"
 #include "common/Log.h"
+#include "display/ModeList.h"
 #include "display/Orientation.h"
 #include "display/VirtualDisplay.h"
 #include "encode/AdaptiveBitrate.h"
@@ -191,14 +192,12 @@ RequestedMode RequestedModeFor(const protocol::Hello& hello)
     RequestedMode mode;
     if (hello.modeWidthPx && hello.modeHeightPx)
     {
-        driver::PlugRequest probe;
-        probe.width = std::max(hello.modeWidthPx, hello.modeHeightPx); // landscape only in v1
-        probe.height = std::min(hello.modeWidthPx, hello.modeHeightPx);
-        probe.refreshHz[0] = 60;
-        if (driver::IsValidPlugRequest(probe))
+        const uint16_t width = std::max(hello.modeWidthPx, hello.modeHeightPx); // landscape
+        const uint16_t height = std::min(hello.modeWidthPx, hello.modeHeightPx);
+        if (driver::IsValidMode(width, height, 60))
         {
-            mode.width = probe.width;
-            mode.height = probe.height;
+            mode.width = width;
+            mode.height = height;
         }
         else
         {
@@ -240,29 +239,61 @@ driver::PlugRequest PlugRequestFor(const protocol::Hello& hello, unsigned maxFps
     // real screen even when the user picked a lower stream resolution.
     r.widthMm = static_cast<uint16_t>(std::lround(width / xdpi * 25.4));
     r.heightMm = static_cast<uint16_t>(std::lround(height / ydpi * 25.4));
-    r.width = mode.width ? mode.width : static_cast<uint16_t>(width & ~1u);
-    r.height = mode.height ? mode.height : static_cast<uint16_t>(height & ~1u);
-
-    if (mode.hz)
-    {
-        // Only the picked rate, so Windows can't choose another one.
-        r.refreshHz[0] = static_cast<uint16_t>(mode.hz);
-        return r;
-    }
+    const uint16_t nativeWidth = static_cast<uint16_t>(width & ~1u);
+    const uint16_t nativeHeight = static_cast<uint16_t>(height & ~1u);
+    r.width = mode.width ? mode.width : nativeWidth;
+    r.height = mode.height ? mode.height : nativeHeight;
 
     long hz = std::lround(hello.refreshMilliHz / 1000.0);
     if (hz < 24 || hz > 240)
     {
         hz = 60;
     }
-    // Prefer a mode no faster than we'll stream; keep the client's rate available as an option.
-    const long preferred = std::min<long>(hz, static_cast<long>(maxFps));
+    // The picked rate, else the panel's capped at what the client decodes comfortably (maxFps).
+    const long preferred = mode.hz ? static_cast<long>(mode.hz) : std::min<long>(hz, static_cast<long>(maxFps));
     r.refreshHz[0] = static_cast<uint16_t>(preferred);
     if (hz != preferred)
     {
-        r.refreshHz[1] = static_cast<uint16_t>(hz);
+        r.refreshHz[1] = static_cast<uint16_t>(hz); // the EDID's second timing
     }
+
+    // Every size x rate the client can show, so the mode can change in Windows or from the app
+    // without plugging a new monitor. Without lists: the native size at the preferred rates.
+    std::vector<driver::PlugMode> sizes;
+    for (const auto& size : hello.sizes)
+    {
+        sizes.push_back({std::max(size.width, size.height), std::min(size.width, size.height), 0});
+    }
+    if (sizes.empty())
+    {
+        sizes.push_back({nativeWidth, nativeHeight, 0});
+    }
+    std::vector<uint16_t> rates(hello.rates.begin(), hello.rates.end());
+    if (rates.empty())
+    {
+        rates = {r.refreshHz[0], r.refreshHz[1]};
+    }
+    const auto modes = BuildModeList({r.width, r.height, r.refreshHz[0]}, sizes, rates);
+    r.modeCount = static_cast<uint16_t>(modes.size());
+    std::copy(modes.begin(), modes.end(), r.modes);
     return r;
+}
+
+// Whether `request` offers this mode (after filling 0 fields from its preferred mode).
+std::optional<driver::PlugMode> OfferedMode(const driver::PlugRequest& request, protocol::DisplayMode wanted)
+{
+    const driver::PlugMode mode{wanted.width ? wanted.width : request.width,
+                                wanted.height ? wanted.height : request.height,
+                                wanted.refreshHz ? wanted.refreshHz : request.refreshHz[0]};
+    for (uint16_t i = 0; i < request.modeCount; ++i)
+    {
+        const auto& m = request.modes[i];
+        if (m.width == mode.width && m.height == mode.height && m.refreshHz == mode.refreshHz)
+        {
+            return mode;
+        }
+    }
+    return std::nullopt;
 }
 
 // Sleeps with ~0.5 ms precision (plain Sleep() rounds up to the 15.6 ms timer tick).
@@ -419,6 +450,12 @@ class SentFrames
         std::lock_guard lock(m_mutex);
         m_frames[m_next] = frame;
         m_next = (m_next + 1) % m_frames.size();
+    }
+
+    void Clear()
+    {
+        std::lock_guard lock(m_mutex);
+        m_frames.fill({});
     }
 
     std::optional<Frame> Find(uint64_t captureUs)
@@ -634,10 +671,11 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
 
     // Declared before the pipeline so the monitor is unplugged after capture/encode shut down.
     VirtualDisplay display;
+    driver::PlugRequest request; // the monitor's modes, for DISPLAY_MODE
 
     if (options.outputName.empty())
     {
-        auto request = PlugRequestFor(*hello, options.maxFps, mode);
+        request = PlugRequestFor(*hello, options.maxFps, mode);
         HRESULT plugged = display.Plug(request);
         if (FAILED(plugged) && (mode.width || mode.hz))
         {
@@ -656,8 +694,8 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
             conn.Send(MessageType::Bye, 0, NowMicros(), {});
             return;
         }
-        Log(L"session: plugged monitor %u: %ux%u @ %u Hz, %ux%u mm", display.Index() + 1, request.width,
-            request.height, request.refreshHz[0], request.widthMm, request.heightMm);
+        Log(L"session: plugged monitor %u: %ux%u @ %u Hz (%u modes), %ux%u mm", display.Index() + 1, request.width,
+            request.height, request.refreshHz[0], request.modeCount, request.widthMm, request.heightMm);
         if (!WaitForExtendedDisplay(display.Index(), 8000))
         {
             Log(L"session: the monitor did not appear as an extended display (looking for %s). "
@@ -666,6 +704,16 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
             conn.Send(MessageType::Bye, 0, NowMicros(), {});
             return;
         }
+        // Windows restores the mode it last used for this monitor; a mode picked in the app wins.
+        // With no pick, whatever Windows (or the user in Settings) chose stands.
+        capture::LocatedOutput located;
+        if ((mode.width || mode.hz) && capture::FindVirtualOutput(display.Index(), located))
+        {
+            SetDisplayMode(located.deviceName, request.width, request.height, request.refreshHz[0]);
+        }
+        // The monitor only offers modes the client can show, so stream at whichever one Windows
+        // runs, including one the user switches to later.
+        options.maxFps = 240;
     }
 
     // Bitrate: the user's pick (HELLO, later ENCODER_SETTINGS), else --bitrate, else adaptive.
@@ -741,9 +789,16 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
     std::atomic<bool> stop{false};
     std::atomic<bool> keyframeRequested{false};
     std::atomic<int> requestedOrientation{-1}; // degrees from the client, -1 = none pending
+    // DISPLAY_MODE from the client, packed width << 32 | height << 16 | Hz; 0 = none pending.
+    std::atomic<uint64_t> requestedMode{0};
     // Adaptive bitrate: one delivered frame (reader thread). Delivery = host send -> decoded on
     // the client, the part of the latency the bitrate drives.
+    std::atomic<bool> streamRebuilt{false}; // set by the frame loop, consumed by the reader
     const auto onAdaptiveSample = [&](const protocol::FrameStats& s) {
+        if (streamRebuilt.exchange(false))
+        {
+            abr.Reset(abr.TargetKbps()); // a new format: learn its delivery times afresh
+        }
         if (s.decodedTs == 0)
         {
             return;
@@ -791,6 +846,20 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
                 {
                     clientStats.Add(*s);
                     onAdaptiveSample(*s);
+                }
+                break;
+            case MessageType::DisplayMode:
+                if (auto wanted = protocol::ParseDisplayMode(p); wanted && options.outputName.empty())
+                {
+                    if (const auto m = OfferedMode(request, *wanted))
+                    {
+                        requestedMode = uint64_t{m->width} << 32 | uint64_t{m->height} << 16 | m->refreshHz;
+                    }
+                    else
+                    {
+                        Log(L"session: client asked for %ux%u @ %u Hz, which the monitor doesn't offer", wanted->width,
+                            wanted->height, wanted->refreshHz);
+                    }
                 }
                 break;
             case MessageType::EncoderSettings:
@@ -893,12 +962,11 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
     };
 
     PreciseSleeper sleeper;
-    const uint64_t frameIntervalUs = 1'000'000 / std::max(1u, options.maxFps);
     uint64_t nextFrameUs = 0;
 
     while (!stop)
     {
-        // Pace to maxFps. While we wait, Desktop Duplication keeps accumulating updates, so the
+        // Pace to the stream rate. While we wait, Desktop Duplication keeps accumulating updates, so the
         // next acquired frame is the newest desktop state rather than a queued stale one.
         const uint64_t nowUs = NowMicros();
         if (nowUs < nextFrameUs)
@@ -943,6 +1011,14 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
         {
             Log(L"encoder: rebuilding for new settings failed 0x%08lX, keeping the current one", Hr(swapped));
             control.changed = true; // e.g. the pipeline was rebuilt meanwhile: retry on the new device
+        }
+
+        // The user picked another mode in the app. Like a change in Windows Settings, capture then
+        // reports ACCESS_LOST and the rebuilt pipeline sends CONFIG with the new size and rate.
+        if (const uint64_t m = requestedMode.exchange(0))
+        {
+            SetDisplayMode(pipeline.output.deviceName, static_cast<uint16_t>(m >> 32), static_cast<uint16_t>(m >> 16),
+                           static_cast<uint16_t>(m));
         }
 
         // The tablet turned: rotate the Windows display to match (like a pivoting monitor).
@@ -996,6 +1072,8 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
             }
             haveFrame = false;
             lastCodecConfig.clear();
+            sentFrames.Clear();
+            streamRebuilt = true;
             touch.SetTarget(pipeline.desktopRect);
             if (pipeline.width != oldWidth || pipeline.height != oldHeight || pipeline.fps != oldFps ||
                 pipeline.rotation != oldRotation)
@@ -1021,7 +1099,7 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
         }
         times.acquired = NowMicros();
         times.present = frame.presentQpc ? QpcToMicros(frame.presentQpc) : times.acquired;
-        nextFrameUs = times.acquired + frameIntervalUs;
+        nextFrameUs = times.acquired + 1'000'000 / std::max(1u, pipeline.fps);
         ComPtr<ID3D11Texture2D> nv12;
         hr = pipeline.composer.Compose(frame.desktop, pipeline.duplicator.Pointer(), &nv12);
         pipeline.duplicator.ReleaseFrame();

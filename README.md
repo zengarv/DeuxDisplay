@@ -122,9 +122,10 @@ sequenceDiagram
         H->>T: VIDEO_FRAME [KEYFRAME]
     end
 
-    alt User picks a new resolution / frame rate
-        T->>H: Disconnect, reconnect with new HELLO
-        H->>D: UNPLUG, then PLUG in the new mode
+    alt User picks a new resolution / frame rate (app or Windows Settings)
+        T->>H: DISPLAY_MODE (from the app)
+        H->>W: Switch the monitor's mode in place
+        H->>T: CONFIG with the new size and rate
     else App closed, tablet asleep, cable pulled or Wi-Fi lost
         T--xH: Connection drops
         H->>W: Lift all touch contacts
@@ -173,6 +174,13 @@ scaled-down sizes the hardware decoder accepts, and a 30 fps stream-only rate. P
 while streaming to open the picker. Choices made there override the host's `--max-stream-size`,
 `--max-fps` and `--codec` options.
 
+The virtual monitor offers every one of those sizes and rates to Windows, so the mode can also be
+changed in **Settings > System > Display** on the PC. Either way the switch happens in place: no
+reconnect, and the monitor isn't unplugged (a codec or connection change still reconnects). The
+stream follows whatever mode Windows runs, and the app adopts a mode picked on the PC so a later
+reconnect keeps it. After updating to this version, reinstall the driver once
+(`scripts\install-driver.ps1`): host and driver must match.
+
 **Codec** is *Auto*, *H.264* or *HEVC (H.265)* (HEVC is listed only if the tablet has a hardware
 HEVC decoder). The pick travels in HELLO's `codecs` bitmask: the app advertises only the chosen
 codec. *Auto* offers HEVC only at sizes the HEVC decoder is rated for, and the host then prefers
@@ -184,9 +192,12 @@ headroom, but on the reference tablet it doesn't lower latency (see
 flowchart TB
     A["Display.getSupportedModes()"] --> C["Resolution + frame rate + codec<br/>choices (or Auto)"]
     B["MediaCodec isSizeSupported()<br/>+ hardware HEVC decoder?"] --> C
-    C -- "Apply" --> E["Reconnect with HELLO<br/>mode_width / height / refresh, codecs"]
-    E --> F["Host plugs a monitor with<br/>only that mode"]
-    F --> G["Windows renders at that mode<br/>host encodes it 1:1"]
+    C -- "Connect" --> E["HELLO: picked mode + every<br/>size and rate the tablet shows"]
+    E --> F["Host plugs a monitor offering<br/>all of them, set to the pick"]
+    C -- "Apply (size / rate)" --> D["DISPLAY_MODE: host switches<br/>the monitor in place"]
+    W["Windows Settings > Display"] --> G
+    D --> G["Windows renders at that mode<br/>host encodes it 1:1, CONFIG"]
+    F --> G
     G --> H["Tablet scales to its panel"]
 ```
 

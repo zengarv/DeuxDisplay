@@ -9,6 +9,7 @@ import android.view.Surface
 import io.github.zengarv.deuxdisplay.protocol.AuthResponse
 import io.github.zengarv.deuxdisplay.protocol.Codec
 import io.github.zengarv.deuxdisplay.protocol.Config
+import io.github.zengarv.deuxdisplay.protocol.DisplayMode
 import io.github.zengarv.deuxdisplay.protocol.EncoderSettings
 import io.github.zengarv.deuxdisplay.protocol.EncoderState
 import io.github.zengarv.deuxdisplay.protocol.FrameStats
@@ -124,6 +125,21 @@ class StreamClient(
         inputHandler?.post { send(MessageType.ENCODER_SETTINGS, 0, payload) }
     }
 
+    // The stream format picked in the app; sent in every HELLO so a reconnect keeps it.
+    @Volatile
+    private var displayMode = DisplayMode(hello.modeWidthPx, hello.modeHeightPx, hello.modeRefreshMilliHz / 1000)
+
+    /**
+     * Switches the host's virtual monitor to this mode without reconnecting (0 = the host's
+     * default for that field). The host answers with CONFIG for the new size and rate. Any thread.
+     */
+    fun setDisplayMode(mode: DisplayMode) {
+        if (mode == displayMode) return
+        displayMode = mode
+        val payload = mode.serialize()
+        inputHandler?.post { send(MessageType.DISPLAY_MODE, 0, payload) }
+    }
+
     /** A dock shortcut or volume key (DockAction); dropped while not connected. Any thread. */
     fun sendAction(action: Int) {
         val payload = serializeAction(action)
@@ -198,11 +214,19 @@ class StreamClient(
             if (wifi != null) authenticate(input, authKey ?: throw RejectedException())
             stats?.onSession(if (wifi == null) "USB" else "Wi-Fi ${wifi.ssid}")
             val encoder = encoderSettings
-            send(MessageType.HELLO, 0, hello.copy(bitrateKbps = encoder.bitrateKbps, encoderQuality = encoder.quality).serialize())
+            val picked = displayMode
+            val current = hello.copy(
+                modeWidthPx = picked.width,
+                modeHeightPx = picked.height,
+                modeRefreshMilliHz = picked.refreshHz * 1000,
+                bitrateKbps = encoder.bitrateKbps,
+                encoderQuality = encoder.quality,
+            )
+            send(MessageType.HELLO, 0, current.serialize())
             // Always state the orientation, so a display left in portrait by an earlier session
             // returns to landscape if the tablet is landscape now.
             send(MessageType.ORIENTATION, 0, serializeOrientation(orientationDegrees))
-            Log.i(TAG, "connected, sent HELLO $hello, orientation $orientationDegrees")
+            Log.i(TAG, "connected, sent HELLO $current, orientation $orientationDegrees")
 
             var decoder: VideoDecoder? = null
             val clock = ClockSync()

@@ -45,7 +45,9 @@ class AdaptiveBitrate
     // allowed for it (bitrate / fps). Returns true when the target changed.
     bool OnFrame(uint64_t nowUs, uint64_t deliveryUs, size_t bytes, size_t budgetBytes);
 
-    // The bitrate changed from outside (e.g. the user switched back to adaptive): start from it.
+    // Starts over from `kbps`, forgetting the baseline and ceiling: after the user switches back to
+    // adaptive, or when the stream changes (size, rate, rotation), since delivery times measured
+    // for another format say nothing about this one.
     void Reset(unsigned kbps);
 
     unsigned TargetKbps() const { return m_targetKbps; }

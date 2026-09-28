@@ -42,4 +42,39 @@ bool SetDisplayOrientation(const std::wstring& deviceName, uint16_t degrees)
     return true;
 }
 
+bool SetDisplayMode(const std::wstring& deviceName, uint16_t width, uint16_t height, uint16_t refreshHz)
+{
+    DEVMODEW mode{};
+    mode.dmSize = sizeof(mode);
+    if (!EnumDisplaySettingsExW(deviceName.c_str(), ENUM_CURRENT_SETTINGS, &mode, 0))
+    {
+        Log(L"display mode: can't read the mode of %s (%lu)", deviceName.c_str(), GetLastError());
+        return false;
+    }
+    DWORD w = width;
+    DWORD h = height;
+    if (mode.dmDisplayOrientation & 1) // portrait: the desktop is taller than wide
+    {
+        std::swap(w, h);
+    }
+    if (mode.dmPelsWidth == w && mode.dmPelsHeight == h && mode.dmDisplayFrequency == refreshHz)
+    {
+        return true;
+    }
+    mode.dmPelsWidth = w;
+    mode.dmPelsHeight = h;
+    mode.dmDisplayFrequency = refreshHz;
+    mode.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY;
+
+    const LONG result = ChangeDisplaySettingsExW(deviceName.c_str(), &mode, nullptr, 0, nullptr);
+    if (result != DISP_CHANGE_SUCCESSFUL)
+    {
+        Log(L"display mode: Windows refused %ux%u @ %u Hz on %s (%ld)", width, height, refreshHz, deviceName.c_str(),
+            result);
+        return false;
+    }
+    Log(L"display mode: %s now %ux%u @ %u Hz", deviceName.c_str(), width, height, refreshHz);
+    return true;
+}
+
 } // namespace dd

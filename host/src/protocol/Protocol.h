@@ -38,6 +38,7 @@ enum class MessageType : uint8_t
     Orientation = 0x41,
     Action = 0x42,
     EncoderSettings = 0x43,
+    DisplayMode = 0x44,
 };
 
 namespace video_flags
@@ -66,6 +67,14 @@ struct Header
 
 inline constexpr uint8_t kQualityHostDecides = 0xFF;
 
+struct Size
+{
+    uint16_t width = 0;
+    uint16_t height = 0;
+
+    bool operator==(const Size&) const = default;
+};
+
 struct Hello
 {
     uint16_t protocolVersion = kVersion;
@@ -84,6 +93,10 @@ struct Hello
     // Optional encoder settings picked by the user (see EncoderSettings).
     uint32_t bitrateKbps = 0;                  // 0 = host decides
     uint8_t encoderQuality = kQualityHostDecides; // 0 fastest .. 100 best
+    // Optional: stream sizes (landscape) and frame rates the client can show; the virtual monitor
+    // offers every combination, so the user can switch modes in Windows or in the app.
+    std::vector<Size> sizes;
+    std::vector<uint16_t> rates;
 };
 
 struct Config
@@ -192,6 +205,20 @@ struct EncoderSettings
 
 std::vector<uint8_t> SerializeEncoderSettings(const EncoderSettings& msg);
 std::optional<EncoderSettings> ParseEncoderSettings(std::span<const uint8_t> payload);
+
+// DISPLAY_MODE (client -> host): switch the virtual monitor to this mode, live. 0 in a field =
+// the monitor's preferred value for it.
+struct DisplayMode
+{
+    uint16_t width = 0;
+    uint16_t height = 0;
+    uint16_t refreshHz = 0;
+
+    bool operator==(const DisplayMode&) const = default;
+};
+
+std::vector<uint8_t> SerializeDisplayMode(const DisplayMode& msg);
+std::optional<DisplayMode> ParseDisplayMode(std::span<const uint8_t> payload);
 
 // ENCODER_STATE (host -> client): what the encoder is running at now.
 struct EncoderState

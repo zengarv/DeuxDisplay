@@ -22,3 +22,4 @@ void RunRotationTests();
 void RunTouchTests();
 void RunAdbTests();
 void RunAdaptiveBitrateTests();
+void RunModeListTests();

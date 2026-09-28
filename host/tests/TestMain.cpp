@@ -10,6 +10,7 @@ int main()
     RunTouchTests();
     RunAdbTests();
     RunAdaptiveBitrateTests();
+    RunModeListTests();
 
     if (g_failures != 0)
     {

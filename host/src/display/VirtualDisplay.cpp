@@ -251,6 +251,9 @@ driver::PlugRequest DefaultPlugRequest()
     r.heightMm = 168;
     r.refreshHz[0] = 60;
     r.refreshHz[1] = 90;
+    r.modeCount = 2;
+    r.modes[0] = {2408, 1720, 60};
+    r.modes[1] = {2408, 1720, 90};
     return r;
 }
 

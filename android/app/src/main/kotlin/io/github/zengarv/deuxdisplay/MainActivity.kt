@@ -29,6 +29,7 @@ import android.widget.Spinner
 import android.widget.Switch
 import android.widget.TextView
 import io.github.zengarv.deuxdisplay.protocol.Config
+import io.github.zengarv.deuxdisplay.protocol.DisplayMode
 import io.github.zengarv.deuxdisplay.protocol.DockAction
 import io.github.zengarv.deuxdisplay.protocol.EncoderSettings
 import io.github.zengarv.deuxdisplay.protocol.MediaState
@@ -247,7 +248,8 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
     }
 
     private fun startClient(holder: SurfaceHolder) {
-        val hello = DisplayInfo.hello(this, mode).copy(bitrateKbps = encoder.bitrateKbps, encoderQuality = encoder.quality)
+        val hello = DisplayInfo.hello(this, mode, modeOptions)
+            .copy(bitrateKbps = encoder.bitrateKbps, encoderQuality = encoder.quality)
         val secrets = pairing.load()?.let { Pairing.derive(it.code) }
         if (useWifi && secrets == null) {
             showStatus(getString(R.string.status_not_paired))
@@ -288,10 +290,37 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
     private fun onStreamConfig(config: Config) {
         val hz = (config.fpsMilliHz / 1000.0).roundToInt()
         runOnUiThread {
+            adoptStreamFormat(config.widthPx, config.heightPx, hz)
             if (hz == streamHz) return@runOnUiThread
             streamHz = hz
             applyPanelRefresh()
         }
+    }
+
+    /**
+     * The monitor's mode can change on the PC (Windows' display settings). If it no longer matches
+     * an explicit pick here, adopt it, so the settings show it and a reconnect doesn't switch back.
+     * "Auto" picks stay Auto: they mean whatever the PC runs. Sizes are landscape (scan-out).
+     */
+    private fun adoptStreamFormat(width: Int, height: Int, hz: Int) {
+        val sizeDiffers = mode.hasSize && (mode.width != width || mode.height != height)
+        val rateDiffers = mode.refreshHz != 0 && mode.refreshHz != hz
+        if (!sizeDiffers && !rateDiffers) return
+        val option = modeOptions.firstOrNull { it.width == width && it.height == height } ?: return
+        if (hz !in option.refreshRates) return
+        val adopted = mode.copy(
+            width = if (mode.hasSize) width else 0,
+            height = if (mode.hasSize) height else 0,
+            refreshHz = if (mode.refreshHz != 0) hz else 0,
+        )
+        Log.i(TAG, "stream format changed on the PC: $mode -> $adopted")
+        mode = adopted
+        saveMode()
+        // Also the pick the client resends on reconnect (the host already runs this mode: no-op).
+        client?.setDisplayMode(DisplayMode(mode.width, mode.height, mode.refreshHz))
+        val index = resolutionIndexOf(mode)
+        resolutionSpinner.setSelection(index)
+        updateRefreshChoices(index, mode.refreshHz)
     }
 
     // Rotating the tablet rotates the Windows display to match, like a pivoting monitor. The
@@ -557,11 +586,19 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
         if (picked == mode && pickedWifi == useWifi && !codeChanged) return
 
         Log.i(TAG, "stream mode $mode -> $picked, wifi $useWifi -> $pickedWifi")
+        val onlyFormat = picked.codec == mode.codec && pickedWifi == useWifi && !codeChanged
         mode = picked
         useWifi = pickedWifi
         saveMode()
         applyPanelRefresh()
-        // Reconnect with a new HELLO: the host unplugs the monitor and plugs one in the new mode.
+        val running = client
+        if (onlyFormat && streaming && running != null) {
+            // The monitor already offers every size and rate: switch it in place, like Windows'
+            // own display settings. The host answers with CONFIG for the new format.
+            running.setDisplayMode(DisplayMode(picked.width, picked.height, picked.refreshHz))
+            return
+        }
+        // Reconnect with a new HELLO (codec or link changed).
         val holder = surfaceHolder ?: return
         client?.stop()
         startClient(holder)
@@ -583,12 +620,13 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
     }
 
     /**
-     * Asks for the panel mode at the stream's rate (the picked one, else the host's from CONFIG),
+     * Asks for the panel mode at the stream's rate (from CONFIG, else the picked one),
      * so frames aren't shown on a mismatched refresh. Only a request: some OEM policies still
      * decide themselves (ColorOS on the Pad Go stays at 60 Hz unless the screen is touched).
      */
     private fun applyPanelRefresh() {
-        val hz = if (mode.refreshHz != 0) mode.refreshHz else streamHz
+        // The stream's real rate once known: it can change in Windows' display settings too.
+        val hz = if (streamHz > 0) streamHz else mode.refreshHz
         val params = window.attributes
         val modeId = StreamModes.panelModeIdFor(this, hz)
         if (params.preferredDisplayModeId != modeId) {

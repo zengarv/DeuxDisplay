@@ -81,6 +81,7 @@
     <ClInclude Include="src\capture\PointerShape.h" />
     <ClInclude Include="src\common\Clock.h" />
     <ClInclude Include="src\common\Log.h" />
+    <ClInclude Include="src\display\ModeList.h" />
     <ClInclude Include="src\display\Orientation.h" />
     <ClInclude Include="src\display\VirtualDisplay.h" />
     <ClInclude Include="src\render\Rotation.h" />

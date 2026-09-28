@@ -132,7 +132,7 @@ std::optional<Header> DecodeHeader(std::span<const uint8_t, kHeaderSize> in)
 
 std::vector<uint8_t> SerializeHello(const Hello& msg)
 {
-    Writer w(44 + msg.deviceName.size());
+    Writer w(46 + msg.deviceName.size() + 4 * msg.sizes.size() + 2 * msg.rates.size());
     w.Put(kMagic);
     w.Put(msg.protocolVersion);
     w.Put(msg.widthPx);
@@ -149,6 +149,17 @@ std::vector<uint8_t> SerializeHello(const Hello& msg)
     w.Put(msg.bitrateKbps);
     w.Put(msg.encoderQuality);
     w.Put(uint8_t{0});
+    w.Put(static_cast<uint8_t>(msg.sizes.size()));
+    for (const auto& size : msg.sizes)
+    {
+        w.Put(size.width);
+        w.Put(size.height);
+    }
+    w.Put(static_cast<uint8_t>(msg.rates.size()));
+    for (uint16_t rate : msg.rates)
+    {
+        w.Put(rate);
+    }
     return w.Take();
 }
 
@@ -187,6 +198,30 @@ std::optional<Hello> ParseHello(std::span<const uint8_t> payload)
             {
                 msg.bitrateKbps = bitrate;
                 msg.encoderQuality = quality;
+
+                uint8_t sizeCount = 0;
+                std::vector<Size> sizes;
+                bool ok = r.Get(sizeCount);
+                for (uint8_t i = 0; ok && i < sizeCount; ++i)
+                {
+                    Size size;
+                    ok = r.Get(size.width) && r.Get(size.height);
+                    sizes.push_back(size);
+                }
+                uint8_t rateCount = 0;
+                std::vector<uint16_t> rates;
+                ok = ok && r.Get(rateCount);
+                for (uint8_t i = 0; ok && i < rateCount; ++i)
+                {
+                    uint16_t rate = 0;
+                    ok = r.Get(rate);
+                    rates.push_back(rate);
+                }
+                if (ok)
+                {
+                    msg.sizes = std::move(sizes);
+                    msg.rates = std::move(rates);
+                }
             }
         }
     }
@@ -304,6 +339,28 @@ std::optional<EncoderSettings> ParseEncoderSettings(std::span<const uint8_t> pay
     EncoderSettings msg;
     uint8_t reserved = 0;
     if (!r.Get(msg.bitrateKbps) || !r.Get(msg.quality) || !r.Get(reserved))
+    {
+        return std::nullopt;
+    }
+    return msg;
+}
+
+std::vector<uint8_t> SerializeDisplayMode(const DisplayMode& msg)
+{
+    Writer w(8);
+    w.Put(msg.width);
+    w.Put(msg.height);
+    w.Put(msg.refreshHz);
+    w.Put(uint16_t{0});
+    return w.Take();
+}
+
+std::optional<DisplayMode> ParseDisplayMode(std::span<const uint8_t> payload)
+{
+    Reader r(payload);
+    DisplayMode msg;
+    uint16_t reserved = 0;
+    if (!r.Get(msg.width) || !r.Get(msg.height) || !r.Get(msg.refreshHz) || !r.Get(reserved))
     {
         return std::nullopt;
     }

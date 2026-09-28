@@ -98,6 +98,18 @@ void CutsHardWhenDeliveryStaysSlow()
     CHECK(abr.TargetKbps() <= 10'000);
 }
 
+void ResetForgetsTheOldFormatsBaseline()
+{
+    // Learned at a small size (fast decode), then the stream goes full size (slower decode, and
+    // that's normal): after Reset it must not read the slower delivery as congestion.
+    AdaptiveBitrate abr(30'000, {5'000, 100'000});
+    uint64_t now = 1'000'000;
+    Run(abr, now, 10, [](unsigned) { return 27'000; }, 0.3);
+    abr.Reset(abr.TargetKbps());
+    Run(abr, now, 10, [](unsigned) { return 39'000; }, 0.3);
+    CHECK(abr.TargetKbps() == 30'000);
+}
+
 void NeverLeavesItsLimits()
 {
     AdaptiveBitrate abr(1'000, {5'000, 40'000});
@@ -119,5 +131,6 @@ void RunAdaptiveBitrateTests()
     SettlesBelowWhereDeliverySlowsDown();
     BacksOffWhenDeliverySuddenlyRises();
     CutsHardWhenDeliveryStaysSlow();
+    ResetForgetsTheOldFormatsBaseline();
     NeverLeavesItsLimits();
 }
