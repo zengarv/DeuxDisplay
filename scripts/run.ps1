@@ -27,7 +27,7 @@ param(
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Release',
     [switch]$Install,
-    [int]$BitrateKbps = 30000,
+    [string]$BitrateKbps = 'auto',  # or a fixed bitrate in kbit/s
     [int]$MaxFps = 60,
     [string]$MaxStreamSize, # e.g. 2560x1440: encode at most this size (fits the tablet's decoder)
     [ValidateSet('auto', 'h264', 'hevc')]

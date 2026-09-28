@@ -42,9 +42,10 @@ class ProtocolTest {
         val hello = Hello(
             2408, 1720, 360, 90_000, Protocol.CODEC_MASK_H264, "OnePlus OPD2305", 260_047, 260_268,
             modeWidthPx = 1920, modeHeightPx = 1370, modeRefreshMilliHz = 60_000,
+            bitrateKbps = 45_000, encoderQuality = 30,
         )
         val bytes = hello.serialize()
-        assertEquals(38 + hello.deviceName.length, bytes.size)
+        assertEquals(44 + hello.deviceName.length, bytes.size)
         assertEquals('D'.code.toByte(), bytes[0])
         assertEquals(hello, Hello.parse(bytes))
         assertEquals(hello, Hello.parse(bytes + byteArrayOf(0x55))) // trailing future fields ignored
@@ -54,7 +55,7 @@ class ProtocolTest {
     fun helloWithoutRequestedMode() {
         val hello = Hello(2408, 1720, 360, 90_000, Protocol.CODEC_MASK_H264, "old client", 1, 2, 1920, 1370, 60_000)
         val bytes = hello.serialize()
-        val parsed = Hello.parse(bytes.copyOf(bytes.size - 8))
+        val parsed = Hello.parse(bytes.copyOf(bytes.size - 6 - 8))
         assertEquals(1, parsed.xdpiMilli)
         assertEquals(0, parsed.modeWidthPx)
         assertEquals(0, parsed.modeRefreshMilliHz)
@@ -64,7 +65,7 @@ class ProtocolTest {
     fun helloWithoutOptionalDpi() {
         val hello = Hello(2408, 1720, 360, 90_000, Protocol.CODEC_MASK_H264, "old client", 1, 2)
         val bytes = hello.serialize()
-        val parsed = Hello.parse(bytes.copyOf(bytes.size - 16))
+        val parsed = Hello.parse(bytes.copyOf(bytes.size - 6 - 16))
         assertEquals(0, parsed.xdpiMilli)
         assertEquals("old client", parsed.deviceName)
     }
@@ -72,7 +73,7 @@ class ProtocolTest {
     @Test(expected = ProtocolException::class)
     fun helloRejectsTruncated() {
         val bytes = Hello(1, 1, 1, 1, 1, "abc").serialize()
-        Hello.parse(bytes.copyOf(bytes.size - 18)) // cuts into the name
+        Hello.parse(bytes.copyOf(bytes.size - 24)) // cuts into the name
     }
 
     @Test
@@ -133,6 +134,28 @@ class ProtocolTest {
         assertArrayEquals(byteArrayOf(2, 1, 45, 0), state.serialize())
         assertEquals(state, MediaState.parse(state.serialize()))
         assertArrayEquals(byteArrayOf(4), serializeAction(DockAction.UNDO))
+    }
+
+    @Test
+    fun encoderMessagesMatchHostLayout() {
+        // Same bytes as host/tests/ProtocolTests.cpp.
+        val settings = EncoderSettings(45_000, 30)
+        assertArrayEquals(byteArrayOf(0xC8.toByte(), 0xAF.toByte(), 0, 0, 30, 0), settings.serialize())
+        assertEquals(settings, EncoderSettings.parse(settings.serialize()))
+
+        val state = EncoderState(62_000, adaptive = true, quality = 0)
+        assertArrayEquals(byteArrayOf(0x30, 0xF2.toByte(), 0, 0, 1, 0, 0, 0), state.serialize())
+        assertEquals(state, EncoderState.parse(state.serialize()))
+    }
+
+    @Test
+    fun helloWithoutEncoderSettings() {
+        val hello = Hello(2408, 1720, 360, 90_000, Protocol.CODEC_MASK_H264, "c", 1, 2, 1920, 1370, 60_000, 45_000, 30)
+        val bytes = hello.serialize()
+        val parsed = Hello.parse(bytes.copyOf(bytes.size - 6))
+        assertEquals(1920, parsed.modeWidthPx)
+        assertEquals(0, parsed.bitrateKbps)
+        assertEquals(Protocol.QUALITY_HOST_DECIDES, parsed.encoderQuality)
     }
 
     @Test(expected = ProtocolException::class)

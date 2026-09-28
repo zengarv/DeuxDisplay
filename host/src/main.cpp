@@ -129,7 +129,7 @@ void PrintUsage()
 {
     std::wprintf(L"DeuxDisplayHost\n\n"
                  L"Usage:\n"
-                 L"  DeuxDisplayHost --serve [--port N] [--bitrate KBPS] [--max-fps N] [--max-stream-size WxH]\n"
+                 L"  DeuxDisplayHost --serve [--port N] [--bitrate auto|KBPS] [--max-fps N] [--max-stream-size WxH]\n"
                  L"                          [--codec auto|h264|hevc] [--repeat-frames] [--no-touch]\n"
                  L"                          [--transport both|usb|wifi] [--no-adb] [--adb PATH]\n"
                  L"                          [--output \\\\.\\DISPLAYn]\n"
@@ -139,6 +139,8 @@ void PrintUsage()
                  L"      instead (debugging). Over USB the host keeps `adb reverse` in place for every attached\n"
                  L"      tablet, so plugging one in (app open) adds the display; --no-adb turns that off.\n"
                  L"      A resolution/frame rate picked in the tablet app overrides --max-stream-size/--max-fps.\n"
+                 L"      --bitrate auto (default) tunes the bitrate to what the link and the tablet's decoder keep\n"
+                 L"      up with; a bitrate picked in the tablet app overrides --bitrate.\n"
                  L"      Touches and dock shortcuts from the tablet are injected unless --no-touch is given.\n"
                  L"  DeuxDisplayHost --create-display [SECONDS]\n"
                  L"      Plug a 2408x1720 virtual monitor until Enter is pressed (or for SECONDS)\n"
@@ -159,7 +161,12 @@ bool ParseServeOptions(int argc, wchar_t** argv, dd::ServeOptions& options)
         }
         else if (arg == L"--bitrate" && i + 1 < argc)
         {
-            options.bitrateKbps = std::wcstoul(argv[++i], nullptr, 10);
+            const std::wstring_view value = argv[++i];
+            options.bitrateKbps = value == L"auto" ? 0 : std::wcstoul(value.data(), nullptr, 10);
+            if (options.bitrateKbps != 0 && options.bitrateKbps < 500)
+            {
+                return false;
+            }
         }
         else if (arg == L"--max-stream-size" && i + 1 < argc)
         {
@@ -218,7 +225,7 @@ bool ParseServeOptions(int argc, wchar_t** argv, dd::ServeOptions& options)
             return false;
         }
     }
-    return options.port != 0 && options.bitrateKbps >= 500 && options.maxFps >= 1 && options.maxFps <= 240;
+    return options.port != 0 && options.maxFps >= 1 && options.maxFps <= 240;
 }
 
 } // namespace

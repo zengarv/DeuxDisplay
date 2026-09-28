@@ -271,6 +271,16 @@ HRESULT MfH264Encoder::ConfigureCodecApi(const EncoderSettings& settings)
     return S_OK;
 }
 
+HRESULT MfH264Encoder::SetBitrate(UINT kbps)
+{
+    return m_codecApi ? SetUint(m_codecApi.Get(), CODECAPI_AVEncCommonMeanBitRate, kbps * 1000) : E_NOT_VALID_STATE;
+}
+
+HRESULT MfH264Encoder::SetQualityVsSpeed(UINT quality)
+{
+    return m_codecApi ? SetUint(m_codecApi.Get(), CODECAPI_AVEncCommonQualityVsSpeed, quality) : E_NOT_VALID_STATE;
+}
+
 HRESULT MfH264Encoder::SetMediaTypes(const EncoderSettings& settings)
 {
     ComPtr<IMFMediaType> out;

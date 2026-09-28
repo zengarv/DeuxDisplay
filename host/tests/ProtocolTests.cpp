@@ -57,9 +57,11 @@ void HelloRoundTrip()
     h.modeWidthPx = 1920;
     h.modeHeightPx = 1370;
     h.modeRefreshMilliHz = 60000;
+    h.bitrateKbps = 45000;
+    h.encoderQuality = 30;
 
     auto bytes = SerializeHello(h);
-    CHECK(bytes.size() == 20 + 2 + h.deviceName.size() + 8 + 8);
+    CHECK(bytes.size() == 20 + 2 + h.deviceName.size() + 8 + 8 + 6);
     CHECK(bytes[0] == 'D' && bytes[1] == 'X' && bytes[2] == 'D' && bytes[3] == 'P');
 
     auto p = ParseHello(bytes);
@@ -71,11 +73,17 @@ void HelloRoundTrip()
     CHECK(p->deviceName == h.deviceName);
     CHECK(p->xdpiMilli == 260047 && p->ydpiMilli == 260268);
     CHECK(p->modeWidthPx == 1920 && p->modeHeightPx == 1370 && p->modeRefreshMilliHz == 60000);
+    CHECK(p->bitrateKbps == 45000 && p->encoderQuality == 30);
 
     bytes.push_back(0xAA); // appended future field must be ignored
     CHECK(ParseHello(bytes).has_value());
 
-    bytes.resize(bytes.size() - 9); // older client: DPI but no requested mode
+    bytes.resize(bytes.size() - 7); // older client: requested mode but no encoder settings
+    auto noEncoder = ParseHello(bytes);
+    CHECK(noEncoder.has_value() && noEncoder->modeWidthPx == 1920 && noEncoder->bitrateKbps == 0 &&
+          noEncoder->encoderQuality == kQualityHostDecides);
+
+    bytes.resize(bytes.size() - 8); // older client: DPI but no requested mode
     auto noMode = ParseHello(bytes);
     CHECK(noMode.has_value() && noMode->xdpiMilli == 260047 && noMode->modeWidthPx == 0 &&
           noMode->modeRefreshMilliHz == 0);
@@ -115,6 +123,22 @@ void OrientationRoundTrip()
     CHECK(!ParseOrientation(SerializeOrientation(45)).has_value());
     CHECK(!ParseOrientation(SerializeOrientation(360)).has_value());
     CHECK(!ParseOrientation({}).has_value());
+}
+
+void EncoderMessagesRoundTrip()
+{
+    // Byte layout is shared with the Android tests (ProtocolTest.kt).
+    const EncoderSettings settings{45000, 30};
+    const auto settingsBytes = SerializeEncoderSettings(settings);
+    CHECK((settingsBytes == std::vector<uint8_t>{0xC8, 0xAF, 0x00, 0x00, 30, 0}));
+    CHECK(ParseEncoderSettings(settingsBytes) == settings);
+    CHECK(!ParseEncoderSettings(std::span(settingsBytes).first(5)).has_value());
+
+    const EncoderState state{62000, true, 0};
+    const auto stateBytes = SerializeEncoderState(state);
+    CHECK((stateBytes == std::vector<uint8_t>{0x30, 0xF2, 0x00, 0x00, 1, 0, 0, 0}));
+    CHECK(ParseEncoderState(stateBytes) == state);
+    CHECK(!ParseEncoderState(std::span(stateBytes).first(7)).has_value());
 }
 
 void ActionAndMediaStateRoundTrip()
@@ -265,6 +289,7 @@ void RunProtocolTests()
     ConfigRoundTrip();
     OrientationRoundTrip();
     ActionAndMediaStateRoundTrip();
+    EncoderMessagesRoundTrip();
     PingPongStatsRoundTrip();
     TouchFrameRoundTrip();
     AuthMessagesRoundTrip();

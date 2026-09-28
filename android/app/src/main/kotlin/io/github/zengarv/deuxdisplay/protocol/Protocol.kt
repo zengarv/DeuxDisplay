@@ -23,6 +23,9 @@ object Protocol {
     const val NONCE_SIZE: Int = 16
     const val MAC_SIZE: Int = 32
 
+    /** HELLO / ENCODER_SETTINGS `quality` meaning "host decides". */
+    const val QUALITY_HOST_DECIDES: Int = 0xFF
+
     const val INPUT_KIND_TOUCH: Int = 1
     const val MAX_TOUCH_CONTACTS: Int = 10
 }
@@ -42,9 +45,11 @@ object MessageType {
     const val FRAME_STATS: Int = 0x22
     const val CURSOR: Int = 0x30
     const val MEDIA_STATE: Int = 0x31
+    const val ENCODER_STATE: Int = 0x32
     const val INPUT: Int = 0x40
     const val ORIENTATION: Int = 0x41
     const val ACTION: Int = 0x42
+    const val ENCODER_SETTINGS: Int = 0x43
 }
 
 enum class Codec(val wire: Int) {
@@ -100,11 +105,14 @@ data class Hello(
     val modeWidthPx: Int = 0,
     val modeHeightPx: Int = 0,
     val modeRefreshMilliHz: Int = 0,
+    /** Encoder picks (see [EncoderSettings]); optional on the wire. */
+    val bitrateKbps: Int = 0,
+    val encoderQuality: Int = Protocol.QUALITY_HOST_DECIDES,
     val protocolVersion: Int = Protocol.VERSION,
 ) {
     fun serialize(): ByteArray {
         val name = deviceName.toByteArray(Charsets.UTF_8).let { if (it.size > 0xFFFF) it.copyOf(0xFFFF) else it }
-        return le(38 + name.size).apply {
+        return le(44 + name.size).apply {
             putInt(Protocol.MAGIC)
             putShort(protocolVersion.toShort())
             putShort(widthPx.toShort())
@@ -119,6 +127,9 @@ data class Hello(
             putShort(modeWidthPx.toShort())
             putShort(modeHeightPx.toShort())
             putInt(modeRefreshMilliHz)
+            putInt(bitrateKbps)
+            put(encoderQuality.toByte())
+            put(0)
         }.array()
     }
 
@@ -141,7 +152,13 @@ data class Hello(
             val modeW = if (hasMode) u16() else 0
             val modeH = if (hasMode) u16() else 0
             val modeRefresh = if (hasMode) int else 0
-            Hello(w, h, dpi, refresh, codecs, String(name, Charsets.UTF_8), xdpi, ydpi, modeW, modeH, modeRefresh, version)
+            val hasEncoder = hasMode && remaining() >= 6
+            val bitrate = if (hasEncoder) int else 0
+            val quality = if (hasEncoder) get().toInt() and 0xFF else Protocol.QUALITY_HOST_DECIDES
+            Hello(
+                w, h, dpi, refresh, codecs, String(name, Charsets.UTF_8), xdpi, ydpi, modeW, modeH, modeRefresh,
+                bitrate, quality, version,
+            )
         }
     }
 }
@@ -275,6 +292,47 @@ data class MediaState(val playback: Int, val muted: Boolean, val volumePercent: 
             get() // reserved
             if (playback > Playback.PLAYING || volume > 100) throw ProtocolException("bad media state")
             MediaState(playback, flags and 1 != 0, volume)
+        }
+    }
+}
+
+/**
+ * ENCODER_SETTINGS: the user's bitrate (kbit/s, 0 = host decides: adaptive) and quality/speed
+ * preset (0 fastest .. 100 best, [Protocol.QUALITY_HOST_DECIDES]) picks, applied live.
+ */
+data class EncoderSettings(val bitrateKbps: Int = 0, val quality: Int = Protocol.QUALITY_HOST_DECIDES) {
+    fun serialize(): ByteArray = le(6).apply {
+        putInt(bitrateKbps)
+        put(quality.toByte())
+        put(0)
+    }.array()
+
+    companion object {
+        fun parse(payload: ByteArray): EncoderSettings = parsing(payload) {
+            val bitrate = int
+            val quality = get().toInt() and 0xFF
+            get() // reserved
+            EncoderSettings(bitrate, quality)
+        }
+    }
+}
+
+/** ENCODER_STATE: what the host's encoder runs at now, and whether it tunes the bitrate itself. */
+data class EncoderState(val bitrateKbps: Int, val adaptive: Boolean, val quality: Int) {
+    fun serialize(): ByteArray = le(8).apply {
+        putInt(bitrateKbps)
+        put((if (adaptive) 1 else 0).toByte())
+        put(quality.toByte())
+        putShort(0)
+    }.array()
+
+    companion object {
+        fun parse(payload: ByteArray): EncoderState = parsing(payload) {
+            val bitrate = int
+            val flags = get().toInt() and 0xFF
+            val quality = get().toInt() and 0xFF
+            u16() // reserved
+            EncoderState(bitrate, flags and 1 != 0, quality)
         }
     }
 }

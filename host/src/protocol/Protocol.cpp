@@ -132,7 +132,7 @@ std::optional<Header> DecodeHeader(std::span<const uint8_t, kHeaderSize> in)
 
 std::vector<uint8_t> SerializeHello(const Hello& msg)
 {
-    Writer w(38 + msg.deviceName.size());
+    Writer w(44 + msg.deviceName.size());
     w.Put(kMagic);
     w.Put(msg.protocolVersion);
     w.Put(msg.widthPx);
@@ -146,6 +146,9 @@ std::vector<uint8_t> SerializeHello(const Hello& msg)
     w.Put(msg.modeWidthPx);
     w.Put(msg.modeHeightPx);
     w.Put(msg.modeRefreshMilliHz);
+    w.Put(msg.bitrateKbps);
+    w.Put(msg.encoderQuality);
+    w.Put(uint8_t{0});
     return w.Take();
 }
 
@@ -176,6 +179,15 @@ std::optional<Hello> ParseHello(std::span<const uint8_t> payload)
             msg.modeWidthPx = modeWidth;
             msg.modeHeightPx = modeHeight;
             msg.modeRefreshMilliHz = modeRefresh;
+
+            uint32_t bitrate = 0;
+            uint8_t quality = 0;
+            uint8_t reserved = 0;
+            if (r.Get(bitrate) && r.Get(quality) && r.Get(reserved))
+            {
+                msg.bitrateKbps = bitrate;
+                msg.encoderQuality = quality;
+            }
         }
     }
     return msg;
@@ -275,6 +287,51 @@ std::optional<MediaState> ParseMediaState(std::span<const uint8_t> payload)
         return std::nullopt;
     }
     return MediaState{static_cast<Playback>(playback), (flags & 1) != 0, volume};
+}
+
+std::vector<uint8_t> SerializeEncoderSettings(const EncoderSettings& msg)
+{
+    Writer w(6);
+    w.Put(msg.bitrateKbps);
+    w.Put(msg.quality);
+    w.Put(uint8_t{0});
+    return w.Take();
+}
+
+std::optional<EncoderSettings> ParseEncoderSettings(std::span<const uint8_t> payload)
+{
+    Reader r(payload);
+    EncoderSettings msg;
+    uint8_t reserved = 0;
+    if (!r.Get(msg.bitrateKbps) || !r.Get(msg.quality) || !r.Get(reserved))
+    {
+        return std::nullopt;
+    }
+    return msg;
+}
+
+std::vector<uint8_t> SerializeEncoderState(const EncoderState& msg)
+{
+    Writer w(8);
+    w.Put(msg.bitrateKbps);
+    w.Put(static_cast<uint8_t>(msg.adaptive ? 1 : 0));
+    w.Put(msg.quality);
+    w.Put(uint16_t{0});
+    return w.Take();
+}
+
+std::optional<EncoderState> ParseEncoderState(std::span<const uint8_t> payload)
+{
+    Reader r(payload);
+    EncoderState msg;
+    uint8_t flags = 0;
+    uint16_t reserved = 0;
+    if (!r.Get(msg.bitrateKbps) || !r.Get(flags) || !r.Get(msg.quality) || !r.Get(reserved))
+    {
+        return std::nullopt;
+    }
+    msg.adaptive = (flags & 1) != 0;
+    return msg;
 }
 
 std::vector<uint8_t> SerializePing(uint64_t pingId)

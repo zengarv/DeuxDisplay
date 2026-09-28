@@ -9,6 +9,8 @@ import android.view.Surface
 import io.github.zengarv.deuxdisplay.protocol.AuthResponse
 import io.github.zengarv.deuxdisplay.protocol.Codec
 import io.github.zengarv.deuxdisplay.protocol.Config
+import io.github.zengarv.deuxdisplay.protocol.EncoderSettings
+import io.github.zengarv.deuxdisplay.protocol.EncoderState
 import io.github.zengarv.deuxdisplay.protocol.FrameStats
 import io.github.zengarv.deuxdisplay.protocol.Header
 import io.github.zengarv.deuxdisplay.protocol.Hello
@@ -108,6 +110,18 @@ class StreamClient(
         inputHandler?.post { send(MessageType.INPUT, 0, payload) }
     }
 
+    // Bitrate/quality picks: sent in every HELLO, and live to the running session.
+    @Volatile
+    private var encoderSettings = EncoderSettings(hello.bitrateKbps, hello.encoderQuality)
+
+    /** New encoder picks: the host applies them from its next frame. Any thread. */
+    fun setEncoderSettings(settings: EncoderSettings) {
+        if (settings == encoderSettings) return
+        encoderSettings = settings
+        val payload = settings.serialize()
+        inputHandler?.post { send(MessageType.ENCODER_SETTINGS, 0, payload) }
+    }
+
     /** A dock shortcut or volume key (DockAction); dropped while not connected. Any thread. */
     fun sendAction(action: Int) {
         val payload = serializeAction(action)
@@ -181,7 +195,8 @@ class StreamClient(
             output = s.getOutputStream()
             if (wifi != null) authenticate(input, authKey ?: throw RejectedException())
             stats?.onSession(if (wifi == null) "USB" else "Wi-Fi ${wifi.ssid}")
-            send(MessageType.HELLO, 0, hello.serialize())
+            val encoder = encoderSettings
+            send(MessageType.HELLO, 0, hello.copy(bitrateKbps = encoder.bitrateKbps, encoderQuality = encoder.quality).serialize())
             // Always state the orientation, so a display left in portrait by an earlier session
             // returns to landscape if the tablet is landscape now.
             send(MessageType.ORIENTATION, 0, serializeOrientation(orientationDegrees))
@@ -255,6 +270,8 @@ class StreamClient(
                             val pairing = PairingInfo.parse(frameBuffer.copyOf(header.length))
                             if (Pairing.normalize(pairing.code) != null) onPaired?.invoke(pairing)
                         }
+                        MessageType.ENCODER_STATE ->
+                            stats?.onEncoderState(EncoderState.parse(frameBuffer.copyOf(header.length)))
                         MessageType.MEDIA_STATE ->
                             onMediaState?.invoke(MediaState.parse(frameBuffer.copyOf(header.length)))
                         MessageType.BYE -> {

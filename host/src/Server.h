@@ -9,7 +9,9 @@ namespace dd
 struct ServeOptions
 {
     uint16_t port = 27183;
-    unsigned bitrateKbps = 30000;
+    // Encoder bitrate; 0 = adaptive (tuned to how fast the client gets frames decoded). A bitrate
+    // picked in the tablet app overrides this.
+    unsigned bitrateKbps = 0;
     // Never send faster than this. Frames the client can't decode in time queue up in its decoder
     // and add latency (the OnePlus Pad Go's decoder tops out around 60 fps at 2408x1720).
     unsigned maxFps = 60;

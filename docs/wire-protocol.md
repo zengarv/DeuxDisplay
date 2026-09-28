@@ -55,9 +55,11 @@ Senders must write header and payload with a single write/send call (see latency
 | `0x22` | `FRAME_STATS`     | client → host    | Per-frame receive/decode/render timestamps     |
 | `0x30` | `CURSOR`          | host → client    | Reserved (cursor overlay, post-v1)             |
 | `0x31` | `MEDIA_STATE`     | host → client    | Windows volume and play/pause state            |
+| `0x32` | `ENCODER_STATE`   | host → client    | Encoder's live bitrate and quality             |
 | `0x40` | `INPUT`           | client → host    | Touch input on the stream                      |
 | `0x41` | `ORIENTATION`     | client → host    | Desktop orientation the client wants           |
 | `0x42` | `ACTION`          | client → host    | A shortcut from the client's dock              |
+| `0x43` | `ENCODER_SETTINGS`| client → host    | The user's bitrate/quality picks, applied live |
 
 ### `HELLO` (client → host)
 
@@ -76,6 +78,9 @@ Senders must write header and payload with a single write/send call (see latency
 | 2    | `mode_width_px`     | *Optional.* Stream width the user picked; 0 = host decides  |
 | 2    | `mode_height_px`    | *Optional.* Stream height the user picked; 0 = host decides |
 | 4    | `mode_refresh_mhz`  | *Optional.* Frame rate the user picked (mHz); 0 = host decides |
+| 4    | `bitrate_kbps`      | *Optional.* Encoder bitrate the user picked; 0 = host decides (see `ENCODER_SETTINGS`) |
+| 1    | `encoder_quality`   | *Optional.* 0 (fastest) – 100 (best quality); `0xFF` = host decides |
+| 1    | `reserved`          | *Optional.* 0                                            |
 
 The host plugs a virtual monitor matching `width_px` × `height_px` at `refresh_mhz`, with a
 physical size derived from `xdpi_milli`/`ydpi_milli` (falling back to `density_dpi`), so Windows
@@ -94,7 +99,7 @@ on its own. When set, the host streams **only** that format:
 
 Clients only offer modes the device supports: panel sizes and refresh rates, plus scaled-down
 panel sizes the decoder accepts. The optional fields are positional: a client sending `mode_*`
-must also send `xdpi_milli`/`ydpi_milli`.
+must also send `xdpi_milli`/`ydpi_milli`, and one sending the encoder fields must send `mode_*`.
 
 ### `CONFIG` (host → client)
 
@@ -236,6 +241,45 @@ directly (no key press, so Windows shows no volume flyout).
 after `CONFIG` and then whenever it changes. A host sends it only if it accepts `ACTION`, so
 clients show their dock (and take over the volume keys) only after receiving one.
 
+### `ENCODER_SETTINGS` (client → host)
+
+| Size | Field          | Notes                                                           |
+|-----:|----------------|-----------------------------------------------------------------|
+| 4    | `bitrate_kbps` | Bitrate to encode at; 0 = host decides                          |
+| 1    | `quality`      | Encoder quality/speed preset, 0 (fastest) – 100; `0xFF` = host decides |
+| 1    | `reserved`     | 0                                                               |
+
+Same meaning as the `HELLO` fields, but mid-session: the host applies them from its next frame,
+without a new `CONFIG` or keyframe. A host that decides the bitrate itself runs it **adaptively**
+(below). Hosts clamp bitrates to 500–500 000 kbit/s.
+
+### `ENCODER_STATE` (host → client)
+
+| Size | Field          | Notes                                                    |
+|-----:|----------------|----------------------------------------------------------|
+| 4    | `bitrate_kbps` | Bitrate the encoder is running at now                    |
+| 1    | `flags`        | bit0 = adaptive (the host adjusts `bitrate_kbps` itself) |
+| 1    | `quality`      | Encoder quality/speed preset in use, 0–100               |
+| 2    | `reserved`     | 0                                                        |
+
+Sent right after `CONFIG` and whenever either value changes. `CONFIG.bitrate_kbps` is only the
+starting bitrate.
+
+### Adaptive bitrate
+
+When neither the client nor the host's `--bitrate` fixes the bitrate, the host tunes it from
+`FRAME_STATS`: *delivery* = host send → `decoded_ts`, the transfer and decode that the bitrate
+drives. Every second of motion (15+ frames) the host compares the median delivery with the
+lowest median of the last 20 such seconds (the baseline):
+
+- above the baseline by more than max(3 ms, 20 %): the link or the decoder is falling behind, so
+  cut the bitrate by 25 % (at most every 2 s; no increase for 4 s after);
+- otherwise, if frames used ≥ 60 % of their CBR budget (more bits would show): raise it by
+  10 % (at most every 2 s), or by 2 % once near the bitrate of the last cut.
+
+The range is 5–150 Mbit/s over USB and 5–60 Mbit/s over Wi-Fi, starting at 30. Idle desktops
+send nothing, so the bitrate only moves while there is motion to measure it on.
+
 ## Pairing and authentication
 
 ### Pairing code
@@ -302,6 +346,8 @@ client                              host
   | <--- MEDIA_STATE ---------------  |   (if the host takes ACTION)
   | ---- INPUT (touch) ------------>  |
   | ---- ACTION ------------------->  |
+  | <--- ENCODER_STATE -------------  |   (after CONFIG, and on changes)
+  | ---- ENCODER_SETTINGS --------->  |   (user moves a slider)
   | ---- BYE ---------------------->  |
 ```
 

@@ -1,6 +1,7 @@
 package io.github.zengarv.deuxdisplay.stream
 
 import io.github.zengarv.deuxdisplay.protocol.Config
+import io.github.zengarv.deuxdisplay.protocol.EncoderState
 import io.github.zengarv.deuxdisplay.protocol.Protocol
 import java.util.concurrent.atomic.AtomicLong
 
@@ -31,6 +32,11 @@ class StreamStats {
 
     @Volatile
     var config: Config? = null
+        private set
+
+    /** The host encoder's live bitrate/quality (ENCODER_STATE). */
+    @Volatile
+    var encoder: EncoderState? = null
         private set
 
     @Volatile
@@ -71,6 +77,11 @@ class StreamStats {
         sessionStartMs = System.currentTimeMillis()
         lastRttUs = 0
         bestRttUs = 0
+        encoder = null
+    }
+
+    fun onEncoderState(state: EncoderState) {
+        encoder = state
     }
 
     fun onConfig(config: Config, decoderName: String, lowLatency: Boolean) {

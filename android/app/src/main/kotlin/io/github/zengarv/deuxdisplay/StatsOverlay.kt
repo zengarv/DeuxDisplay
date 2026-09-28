@@ -78,7 +78,15 @@ class StatsOverlay(private val activity: Activity, private val stats: StreamStat
         if (config != null) {
             val codec = if (config.codec == Codec.HEVC) "HEVC" else "H.264"
             val rotation = if (config.rotationDegrees != 0) " · rot ${config.rotationDegrees}°" else ""
-            lines += "$codec ${config.widthPx}×${config.heightPx} @ $streamHz fps · ${fmt(config.bitrateKbps / 1000.0, 0)} Mbps target$rotation"
+            lines += "$codec ${config.widthPx}×${config.heightPx} @ $streamHz fps$rotation"
+            // The live encoder target: the adaptive controller moves it (ENCODER_STATE).
+            val encoder = stats.encoder
+            val target = fmt((encoder?.bitrateKbps ?: config.bitrateKbps) / 1000.0, 1)
+            lines += if (encoder != null) {
+                "Encoder $target Mbps ${if (encoder.adaptive) "(adaptive)" else "(fixed)"} · quality ${encoder.quality}"
+            } else {
+                "Encoder $target Mbps"
+            }
         }
 
         // The panel's live rate, and the one we asked for: an OEM override shows up as a mismatch.

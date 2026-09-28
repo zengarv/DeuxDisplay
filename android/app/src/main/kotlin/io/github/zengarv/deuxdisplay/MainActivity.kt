@@ -24,14 +24,17 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.SeekBar
 import android.widget.Spinner
 import android.widget.Switch
 import android.widget.TextView
 import io.github.zengarv.deuxdisplay.protocol.Config
 import io.github.zengarv.deuxdisplay.protocol.DockAction
+import io.github.zengarv.deuxdisplay.protocol.EncoderSettings
 import io.github.zengarv.deuxdisplay.protocol.MediaState
 import io.github.zengarv.deuxdisplay.protocol.Pairing
 import io.github.zengarv.deuxdisplay.protocol.PairingInfo
+import io.github.zengarv.deuxdisplay.protocol.Protocol
 import io.github.zengarv.deuxdisplay.stream.DisplayInfo
 import io.github.zengarv.deuxdisplay.stream.ModeOption
 import io.github.zengarv.deuxdisplay.stream.PairingStore
@@ -85,6 +88,9 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
     private lateinit var statsOverlay: StatsOverlay
     private var statsEnabled = false
 
+    // Encoder picks from the sliders, applied live: bitrate 0 = adaptive, quality 0xFF = host's.
+    private var encoder = EncoderSettings()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -109,6 +115,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
         dock = DockView(this, getSharedPreferences(DOCK_PREFS, MODE_PRIVATE)) { client?.sendAction(it) }
         volumeIndicator = VolumeIndicator(this)
         statsEnabled = getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(KEY_STATS, false)
+        encoder = loadEncoder()
         statsOverlay = StatsOverlay(this, stats)
         settings = buildSettings()
 
@@ -240,7 +247,7 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
     }
 
     private fun startClient(holder: SurfaceHolder) {
-        val hello = DisplayInfo.hello(this, mode)
+        val hello = DisplayInfo.hello(this, mode).copy(bitrateKbps = encoder.bitrateKbps, encoderQuality = encoder.quality)
         val secrets = pairing.load()?.let { Pairing.derive(it.code) }
         if (useWifi && secrets == null) {
             showStatus(getString(R.string.status_not_paired))
@@ -388,6 +395,18 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
             }
         }
 
+        // Bitrate: Auto (adaptive), then 5..150 Mbps. Quality: Auto, then 0 (fastest)..100 (best).
+        val bitrateSlider = slider(
+            steps = MAX_BITRATE_MBPS / BITRATE_STEP_MBPS,
+            position = encoder.bitrateKbps / 1000 / BITRATE_STEP_MBPS,
+            label = { if (it == 0) getString(R.string.bitrate_auto) else getString(R.string.bitrate_mbps, it * BITRATE_STEP_MBPS) },
+        ) { setEncoder(encoder.copy(bitrateKbps = it * BITRATE_STEP_MBPS * 1000)) }
+        val qualitySlider = slider(
+            steps = 100 / QUALITY_STEP + 1,
+            position = if (encoder.quality == Protocol.QUALITY_HOST_DECIDES) 0 else encoder.quality / QUALITY_STEP + 1,
+            label = { if (it == 0) getString(R.string.quality_auto) else getString(R.string.quality_value, (it - 1) * QUALITY_STEP) },
+        ) { setEncoder(encoder.copy(quality = if (it == 0) Protocol.QUALITY_HOST_DECIDES else (it - 1) * QUALITY_STEP)) }
+
         val apply = Button(this).apply {
             setText(R.string.setting_apply)
             setOnClickListener { applySettings() }
@@ -404,6 +423,8 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
             addView(settingRow(R.string.setting_resolution, resolutionSpinner))
             addView(settingRow(R.string.setting_refresh, refreshSpinner))
             addView(settingRow(R.string.setting_codec, codecSpinner))
+            addView(settingRow(R.string.setting_bitrate, bitrateSlider))
+            addView(settingRow(R.string.setting_quality, qualitySlider))
             addView(settingRow(R.string.setting_connection, connectionSpinner))
             addView(settingRow(R.string.setting_dock, dockSwitch))
             addView(settingRow(R.string.setting_stats, statsSwitch))
@@ -428,6 +449,52 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
             })
             addView(spinner)
         }
+
+    /** A seek bar over positions 0..[steps] with its value shown next to it; [onPicked] on release. */
+    private fun slider(steps: Int, position: Int, label: (Int) -> String, onPicked: (Int) -> Unit): LinearLayout {
+        val value = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            minWidth = dp(120)
+            text = label(position)
+        }
+        val bar = SeekBar(this).apply {
+            max = steps
+            progress = position.coerceIn(0, steps)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                    value.text = label(progress)
+                }
+
+                override fun onStartTrackingTouch(seekBar: SeekBar) = Unit
+
+                override fun onStopTrackingTouch(seekBar: SeekBar) = onPicked(seekBar.progress)
+            })
+        }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(bar, LinearLayout.LayoutParams(dp(240), LinearLayout.LayoutParams.WRAP_CONTENT))
+            addView(value)
+        }
+    }
+
+    /** New slider picks: remembered, and applied to the running stream right away. */
+    private fun setEncoder(settings: EncoderSettings) {
+        if (settings == encoder) return
+        encoder = settings
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+            .putInt(KEY_BITRATE, settings.bitrateKbps)
+            .putInt(KEY_QUALITY, settings.quality)
+            .apply()
+        client?.setEncoderSettings(settings)
+    }
+
+    private fun loadEncoder(): EncoderSettings {
+        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        val kbps = prefs.getInt(KEY_BITRATE, 0).coerceIn(0, MAX_BITRATE_MBPS * 1000)
+        val quality = prefs.getInt(KEY_QUALITY, Protocol.QUALITY_HOST_DECIDES)
+        return EncoderSettings(kbps, if (quality in 0..100) quality else Protocol.QUALITY_HOST_DECIDES)
+    }
 
     private fun spinnerAdapter(labels: List<String>): ArrayAdapter<String> =
         ArrayAdapter(this, android.R.layout.simple_spinner_item, labels).apply {
@@ -572,6 +639,11 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
         private const val KEY_CODEC = "codec"
         private const val KEY_DOCK = "dock"
         private const val KEY_STATS = "debug_stats"
+        private const val KEY_BITRATE = "bitrate_kbps"
+        private const val KEY_QUALITY = "encoder_quality"
+        private const val MAX_BITRATE_MBPS = 150
+        private const val BITRATE_STEP_MBPS = 5
+        private const val QUALITY_STEP = 10
         private const val DOCK_PREFS = "dock"
 
         /** Joining the PC's network needs WifiNetworkSpecifier (Android 10). */

@@ -33,9 +33,11 @@ enum class MessageType : uint8_t
     FrameStats = 0x22,
     Cursor = 0x30,
     MediaState = 0x31,
+    EncoderState = 0x32,
     Input = 0x40,
     Orientation = 0x41,
     Action = 0x42,
+    EncoderSettings = 0x43,
 };
 
 namespace video_flags
@@ -62,6 +64,8 @@ struct Header
     uint64_t timestamp = 0;
 };
 
+inline constexpr uint8_t kQualityHostDecides = 0xFF;
+
 struct Hello
 {
     uint16_t protocolVersion = kVersion;
@@ -77,6 +81,9 @@ struct Hello
     uint16_t modeWidthPx = 0;
     uint16_t modeHeightPx = 0;
     uint32_t modeRefreshMilliHz = 0;
+    // Optional encoder settings picked by the user (see EncoderSettings).
+    uint32_t bitrateKbps = 0;                  // 0 = host decides
+    uint8_t encoderQuality = kQualityHostDecides; // 0 fastest .. 100 best
 };
 
 struct Config
@@ -173,6 +180,31 @@ struct MediaState
 
 std::vector<uint8_t> SerializeMediaState(const MediaState& msg);
 std::optional<MediaState> ParseMediaState(std::span<const uint8_t> payload);
+
+// ENCODER_SETTINGS (client -> host): the user's bitrate and quality picks, applied live.
+struct EncoderSettings
+{
+    uint32_t bitrateKbps = 0;                     // 0 = host decides (adaptive by default)
+    uint8_t quality = kQualityHostDecides;        // 0 fastest .. 100 best, 0xFF = host decides
+
+    bool operator==(const EncoderSettings&) const = default;
+};
+
+std::vector<uint8_t> SerializeEncoderSettings(const EncoderSettings& msg);
+std::optional<EncoderSettings> ParseEncoderSettings(std::span<const uint8_t> payload);
+
+// ENCODER_STATE (host -> client): what the encoder is running at now.
+struct EncoderState
+{
+    uint32_t bitrateKbps = 0;
+    bool adaptive = false; // the host adjusts the bitrate itself
+    uint8_t quality = 0;   // 0 fastest .. 100 best
+
+    bool operator==(const EncoderState&) const = default;
+};
+
+std::vector<uint8_t> SerializeEncoderState(const EncoderState& msg);
+std::optional<EncoderState> ParseEncoderState(std::span<const uint8_t> payload);
 
 inline constexpr size_t kNonceSize = 16;
 inline constexpr size_t kMacSize = 32;

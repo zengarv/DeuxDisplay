@@ -11,7 +11,7 @@
     <string name="codec_h264">H.264</string>
     <string name="codec_hevc">HEVC (H.265)</string>
     <string name="setting_apply">Apply</string>
-    <string name="setting_hint">Press Back while streaming to change these.</string>
+    <string name="setting_hint">Press Back while streaming to change these. Bitrate and quality apply right away.</string>
     <string name="setting_connection">Connection</string>
     <string name="connection_usb">USB</string>
     <string name="connection_wifi">Wi-Fi (direct to PC)</string>
@@ -23,6 +23,12 @@
     <string name="status_not_paired">Wi-Fi isn\'t paired yet.\nConnect once over USB, or press Back and enter the pairing code.</string>
     <string name="setting_dock">Shortcut dock</string>
     <string name="setting_stats">Debug stats</string>
+    <string name="setting_bitrate">Bitrate</string>
+    <string name="bitrate_auto">Auto (adaptive)</string>
+    <string name="bitrate_mbps">%1$d Mbps</string>
+    <string name="setting_quality">Encoder quality</string>
+    <string name="quality_auto">Auto (fastest)</string>
+    <string name="quality_value">%1$d (0 fast, 100 best)</string>
     <string name="dock_toggle">Shortcuts</string>
     <string name="dock_undo">Undo</string>
     <string name="dock_redo">Redo</string>

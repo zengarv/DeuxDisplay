@@ -7,7 +7,9 @@
 
 #include <algorithm>
 #include <atomic>
+#include <array>
 #include <cmath>
+#include <mutex>
 #include <thread>
 
 #include "capture/DesktopDuplicator.h"
@@ -16,6 +18,7 @@
 #include "common/Log.h"
 #include "display/Orientation.h"
 #include "display/VirtualDisplay.h"
+#include "encode/AdaptiveBitrate.h"
 #include "encode/AnnexB.h"
 #include "encode/MfH264Encoder.h"
 #include "input/Shortcuts.h"
@@ -78,9 +81,9 @@ struct Pipeline
     UINT fps = 60;
 
     // `monitorIndex`: which virtual monitor this session streams (VirtualDisplay::Index()).
-    HRESULT Initialize(const ServeOptions& options, bool preferHevc, unsigned monitorIndex)
+    HRESULT Initialize(const ServeOptions& options, bool preferHevc, unsigned monitorIndex, unsigned bitrateKbps,
+                       unsigned quality)
     {
-        const unsigned bitrateKbps = options.bitrateKbps;
         encoder.Shutdown();
         device.Reset();
         const bool found = options.outputName.empty() ? capture::FindVirtualOutput(monitorIndex, output)
@@ -150,6 +153,7 @@ struct Pipeline
         output.adapter->GetDesc1(&adapterDesc);
         encode::EncoderSettings settings{streamWidth, streamHeight, fps, bitrateKbps};
         settings.hevc = preferHevc;
+        settings.qualityVsSpeed = quality;
         hr = encoder.Initialize(device.Get(), adapterDesc.AdapterLuid, settings);
         if (FAILED(hr) && preferHevc)
         {
@@ -300,6 +304,71 @@ bool SendConfig(transport::Connection& conn, const Pipeline& p, unsigned bitrate
     const auto payload = protocol::SerializeConfig(config);
     return conn.Send(MessageType::Config, 0, NowMicros(), payload);
 }
+
+// Adaptive bitrate range. Over USB the adb tunnel carries far more than this, but the tablet's
+// decoder slows down long before; the controller finds where. The Wi-Fi link measured ~100 Mbit/s
+// at best (docs/latency-notes.md), so stay well under that.
+constexpr unsigned kAdaptiveStartKbps = 30'000;
+constexpr encode::AdaptiveBitrate::Limits kAdaptiveUsb{5'000, 150'000};
+constexpr encode::AdaptiveBitrate::Limits kAdaptiveWifi{5'000, 60'000};
+constexpr unsigned kMinBitrateKbps = 500;
+constexpr unsigned kMaxBitrateKbps = 500'000;
+
+// The encoder's bitrate and quality for a session. The reader thread decides (user picks, the
+// adaptive controller); the frame loop applies them, since the encoder isn't thread-safe.
+struct EncoderControl
+{
+    std::mutex mutex;
+    bool adaptive = false;
+    unsigned kbps = 0;
+    unsigned quality = 0;
+    std::atomic<bool> changed{false};
+
+    protocol::EncoderState State()
+    {
+        std::lock_guard lock(mutex);
+        return {kbps, adaptive, static_cast<uint8_t>(quality)};
+    }
+};
+
+// Frames recently sent, so FRAME_STATS (keyed by capture time) can be matched with their send
+// time and size for the adaptive bitrate controller.
+class SentFrames
+{
+  public:
+    struct Frame
+    {
+        uint64_t captureUs = 0;
+        uint64_t sentUs = 0;
+        uint32_t bytes = 0;
+        uint32_t budgetBytes = 0; // what CBR allowed for it
+    };
+
+    void Add(const Frame& frame)
+    {
+        std::lock_guard lock(m_mutex);
+        m_frames[m_next] = frame;
+        m_next = (m_next + 1) % m_frames.size();
+    }
+
+    std::optional<Frame> Find(uint64_t captureUs)
+    {
+        std::lock_guard lock(m_mutex);
+        for (const auto& f : m_frames)
+        {
+            if (f.captureUs == captureUs && f.sentUs != 0)
+            {
+                return f;
+            }
+        }
+        return std::nullopt;
+    }
+
+  private:
+    std::mutex m_mutex;
+    std::array<Frame, 256> m_frames{};
+    size_t m_next = 0;
+};
 
 // Per-frame timestamps (host clock, µs) used to break latency down by stage.
 struct FrameTimes
@@ -529,18 +598,41 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
         }
     }
 
+    // Bitrate: the user's pick (HELLO, later ENCODER_SETTINGS), else --bitrate, else adaptive.
+    // Quality: the user's pick, else the fastest preset.
+    const auto abrLimits = transport == Transport::Wifi ? kAdaptiveWifi : kAdaptiveUsb;
+    const auto fixedKbpsFor = [&](uint32_t requested) -> unsigned {
+        return requested ? std::clamp<unsigned>(requested, kMinBitrateKbps, kMaxBitrateKbps) : options.bitrateKbps;
+    };
+    const auto qualityFor = [](uint8_t requested) -> unsigned {
+        return requested == protocol::kQualityHostDecides ? 0u : std::min<unsigned>(requested, 100);
+    };
+    EncoderControl control;
+    control.adaptive = fixedKbpsFor(hello->bitrateKbps) == 0;
+    control.kbps = control.adaptive ? kAdaptiveStartKbps : fixedKbpsFor(hello->bitrateKbps);
+    control.quality = qualityFor(hello->encoderQuality);
+    encode::AdaptiveBitrate abr(control.kbps, abrLimits);
+    SentFrames sentFrames;
+    unsigned appliedKbps = control.kbps;
+    unsigned appliedQuality = control.quality;
+    Log(L"session: bitrate %s%.1f Mbit/s, quality %u", control.adaptive ? L"adaptive from " : L"",
+        appliedKbps / 1000.0, appliedQuality);
+    const auto sendEncoderState = [&] {
+        return conn.Send(MessageType::EncoderState, 0, NowMicros(), protocol::SerializeEncoderState(control.State()));
+    };
+
     Pipeline pipeline;
     const bool clientHevc = (hello->codecs & protocol::kCodecMaskHevc) != 0;
     const bool clientH264 = (hello->codecs & protocol::kCodecMaskH264) != 0;
     const bool preferHevc = clientHevc && (options.codec != L"h264" || !clientH264);
-    HRESULT hr = pipeline.Initialize(options, preferHevc, display.Index());
+    HRESULT hr = pipeline.Initialize(options, preferHevc, display.Index(), appliedKbps, appliedQuality);
     if (FAILED(hr))
     {
         Log(L"session: pipeline init failed 0x%08lX", Hr(hr));
         conn.Send(MessageType::Bye, 0, NowMicros(), {});
         return;
     }
-    if (!SendConfig(conn, pipeline, options.bitrateKbps))
+    if (!SendConfig(conn, pipeline, appliedKbps) || !sendEncoderState())
     {
         return;
     }
@@ -571,6 +663,41 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
     std::atomic<bool> stop{false};
     std::atomic<bool> keyframeRequested{false};
     std::atomic<int> requestedOrientation{-1}; // degrees from the client, -1 = none pending
+    // Adaptive bitrate: one delivered frame (reader thread). Delivery = host send -> decoded on
+    // the client, the part of the latency the bitrate drives.
+    const auto onAdaptiveSample = [&](const protocol::FrameStats& s) {
+        if (s.decodedTs == 0)
+        {
+            return;
+        }
+        {
+            std::lock_guard lock(control.mutex);
+            if (!control.adaptive)
+            {
+                return;
+            }
+        }
+        const auto sent = sentFrames.Find(s.captureTs);
+        if (!sent || s.decodedTs < sent->sentUs)
+        {
+            return;
+        }
+        const unsigned before = abr.TargetKbps();
+        if (!abr.OnFrame(NowMicros(), s.decodedTs - sent->sentUs, sent->bytes, sent->budgetBytes))
+        {
+            return;
+        }
+        const auto& w = abr.LastWindow();
+        Log(L"abr: %.1f -> %.1f Mbit/s (delivery p50 %.1f ms, baseline %.1f, budget used %.0f%%, %u frames)",
+            before / 1000.0, abr.TargetKbps() / 1000.0, w.deliveryMs, w.baselineMs, w.utilization * 100, w.frames);
+        std::lock_guard lock(control.mutex);
+        if (control.adaptive)
+        {
+            control.kbps = abr.TargetKbps();
+            control.changed = true;
+        }
+    };
+
     std::wstring logTag = t_logTag;
     std::thread reader([&] {
         SetLogTag(logTag.c_str());
@@ -585,6 +712,24 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
                 if (auto s = protocol::ParseFrameStats(p))
                 {
                     clientStats.Add(*s);
+                    onAdaptiveSample(*s);
+                }
+                break;
+            case MessageType::EncoderSettings:
+                if (auto e = protocol::ParseEncoderSettings(p))
+                {
+                    const unsigned fixedKbps = fixedKbpsFor(e->bitrateKbps);
+                    std::lock_guard lock(control.mutex);
+                    if (fixedKbps == 0 && !control.adaptive)
+                    {
+                        abr.Reset(control.kbps); // carry on from where the user left it
+                    }
+                    control.adaptive = fixedKbps == 0;
+                    control.kbps = control.adaptive ? abr.TargetKbps() : fixedKbps;
+                    control.quality = qualityFor(e->quality);
+                    control.changed = true;
+                    Log(L"session: client set bitrate %s%.1f Mbit/s, quality %u",
+                        control.adaptive ? L"adaptive from " : L"", control.kbps / 1000.0, control.quality);
                 }
                 break;
             case MessageType::RequestKeyframe:
@@ -661,7 +806,10 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
         }
         if (frame.timestampUs == times.present)
         {
-            stats.Add(split.frame.size(), times, NowMicros(), pipeline.encoder.LastTiming());
+            const uint64_t sentUs = NowMicros();
+            stats.Add(split.frame.size(), times, sentUs, pipeline.encoder.LastTiming());
+            sentFrames.Add({frame.timestampUs, sentUs, static_cast<uint32_t>(split.frame.size()),
+                            appliedKbps * 1000 / 8 / std::max(1u, pipeline.fps)});
         }
         return true;
     };
@@ -678,6 +826,32 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
         if (nowUs < nextFrameUs)
         {
             sleeper.SleepMicros(nextFrameUs - nowUs);
+        }
+
+        // A new bitrate/quality from the user or the adaptive controller: applies from the next frame.
+        if (control.changed.exchange(false))
+        {
+            const auto want = control.State();
+            if (want.bitrateKbps != appliedKbps)
+            {
+                if (const HRESULT set = pipeline.encoder.SetBitrate(want.bitrateKbps); FAILED(set))
+                {
+                    Log(L"encoder: changing the bitrate mid-stream failed 0x%08lX", Hr(set));
+                }
+                appliedKbps = want.bitrateKbps;
+            }
+            if (want.quality != appliedQuality)
+            {
+                if (const HRESULT set = pipeline.encoder.SetQualityVsSpeed(want.quality); FAILED(set))
+                {
+                    Log(L"encoder: changing quality mid-stream failed 0x%08lX", Hr(set));
+                }
+                appliedQuality = want.quality;
+            }
+            if (!sendEncoderState())
+            {
+                break;
+            }
         }
 
         // The tablet turned: rotate the Windows display to match (like a pivoting monitor).
@@ -724,7 +898,8 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
             const UINT oldHeight = pipeline.height;
             const UINT oldFps = pipeline.fps;
             const uint16_t oldRotation = pipeline.rotation;
-            while (!stop && FAILED(pipeline.Initialize(options, preferHevc, display.Index())))
+            while (!stop && FAILED(pipeline.Initialize(options, preferHevc, display.Index(), appliedKbps,
+                                                       appliedQuality)))
             {
                 Sleep(250);
             }
@@ -734,7 +909,7 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
             if (pipeline.width != oldWidth || pipeline.height != oldHeight || pipeline.fps != oldFps ||
                 pipeline.rotation != oldRotation)
             {
-                if (!SendConfig(conn, pipeline, options.bitrateKbps))
+                if (!SendConfig(conn, pipeline, appliedKbps))
                 {
                     break;
                 }

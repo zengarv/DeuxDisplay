@@ -57,6 +57,11 @@ class MfH264Encoder
 
     void RequestKeyframe() { m_forceKeyframe = true; }
 
+    // Mid-stream changes, applied from the next frame on (CBR target, quality/speed preset).
+    // Fail if this encoder only takes them at initialization.
+    HRESULT SetBitrate(UINT kbps);
+    HRESULT SetQualityVsSpeed(UINT quality);
+
     // Submits one NV12 frame and collects whatever output is ready (normally exactly this frame).
     HRESULT Encode(ID3D11Texture2D* nv12, uint64_t timestampUs, std::vector<EncodedFrame>& out);
 

@@ -9,6 +9,7 @@ int main()
     RunRotationTests();
     RunTouchTests();
     RunAdbTests();
+    RunAdaptiveBitrateTests();
 
     if (g_failures != 0)
     {

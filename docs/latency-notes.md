@@ -147,6 +147,25 @@ only. Medians of the two-second windows' p50 values over one session each.
   redraws when touched. `ACTION` and `MEDIA_STATE` are a few bytes each, and `MEDIA_STATE` goes
   out only on a change (polled every 250 ms on its own thread).
 
+### Adaptive bitrate and the render clock (2026-09-28)
+
+OnePlus Pad Go (Android 14), USB, HEVC 2408×1720, stream at 90 Hz (picked in the app), Intel
+HEVC MFT, dragging windows (15–35 fps of real frames).
+
+- **Render timestamps were wrong on this tablet.** The MediaTek decoder's `OnFrameRendered`
+  times are on a clock 15–30 h behind `System.nanoTime`, so every "on screen" figure in
+  `host.log` before this was garbage (~1.8e16 ms). The client now falls back to when the
+  callback arrived. Decoded → on screen measures 3–4 ms.
+- Adaptive bitrate from 30 Mbit/s climbed in 10 % steps to 48 Mbit/s (frames used 60–90 % of
+  their CBR budget), cut to 36 when delivery (send → decoded) reached 49.7 ms against a 40.4 ms
+  baseline, then probed back up by 1 Mbit/s steps to ~44.
+- Pinned to 150 Mbit/s + quality 100: the encoder used only 5–12 Mbit/s on this content, and
+  encode stayed at 11–12 ms. Latency was unchanged: present → decoded p50 48–63 ms, → on screen
+  50–67 ms, with ~40 ms of it inside the decoder at 90 fps. Bits aren't the limit at this
+  resolution; the decoder is.
+- The panel stays at 60 Hz unless touched, whatever the app requests (ColorOS policy; the app's
+  90 Hz vote reaches SurfaceFlinger). See the debug stats overlay's warnings.
+
 ### Open leads for M4
 - Encode takes ~20 ms at 6.4 MP even on the fastest preset, with no input wait. Next suspects:
   GPU clock ramp-up under bursty load, MFT internal async depth
