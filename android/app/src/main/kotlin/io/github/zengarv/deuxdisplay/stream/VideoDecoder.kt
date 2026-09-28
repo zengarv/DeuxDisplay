@@ -62,8 +62,13 @@ class VideoDecoder(
         codec = MediaCodec.createByCodecName(choice.name)
         lowLatency = configure(surface, width, height, choice)
         codec.setOnFrameRenderedListener({ _, ptsUs, nanoTime ->
-            val t = timings.remove(ptsUs)
-            if (t != null) onFrameTiming?.onFrame(ptsUs, t[0], t[1], nanoTime / 1000)
+            val t = timings.remove(ptsUs) ?: return@setOnFrameRenderedListener
+            // nanoTime should be System.nanoTime-based, but some vendor decoders (MediaTek C2 on
+            // the Pad Go) use another clock, hours off. Then use when we heard of it: a bit late.
+            val nowUs = System.nanoTime() / 1000
+            val reportedUs = nanoTime / 1000
+            val renderedUs = if (reportedUs in maxOf(t[0], t[1])..nowUs) reportedUs else nowUs
+            onFrameTiming?.onFrame(ptsUs, t[0], t[1], renderedUs)
         }, Handler(callbackThread.looper))
         codec.start()
         Log.i(TAG, "decoder $codecName ($mime) ${width}x$height lowLatency=$lowLatency")
