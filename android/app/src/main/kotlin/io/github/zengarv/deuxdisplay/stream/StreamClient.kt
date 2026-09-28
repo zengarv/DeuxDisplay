@@ -53,6 +53,8 @@ class StreamClient(
     private val forcedDecoder: String? = null, // debug: MediaCodec component name to use
     // The host's volume/playback state; the first one also means it takes ACTION messages.
     private val onMediaState: ((MediaState) -> Unit)? = null,
+    // Stream parameters for this session (network thread), e.g. to match the panel's refresh rate.
+    private val onConfig: ((Config) -> Unit)? = null,
 ) {
     /** The host closed a Wi-Fi session during authentication: the pairing code is wrong. */
     private class RejectedException : Exception()
@@ -228,6 +230,7 @@ class StreamClient(
                                 forcedDecoder = forcedDecoder,
                                 rotationDegrees = config.rotationDegrees,
                             )
+                            onConfig?.invoke(config)
                             listener.onStatus(null)
                         }
                         MessageType.PING -> {

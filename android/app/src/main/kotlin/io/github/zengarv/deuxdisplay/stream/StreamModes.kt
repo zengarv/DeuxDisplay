@@ -94,17 +94,46 @@ object StreamModes {
             .orEmpty()
 
     /**
-     * The panel mode at the current resolution refreshing at [hz], for
+     * The panel mode at the current resolution to show a [hz] stream on (see [panelRateFor]), for
      * `WindowManager.LayoutParams.preferredDisplayModeId`; 0 (system default) if there's none.
      */
     fun panelModeIdFor(activity: Activity, hz: Int): Int {
-        if (hz == 0) return 0
-        val display = display(activity) ?: return 0
+        val modes = modesAtCurrentSize(activity)
+        val rate = panelRateFor(modes.map { it.refreshRate }, hz)
+        return modes.firstOrNull { it.refreshRate == rate }?.modeId ?: 0
+    }
+
+    /**
+     * The panel rate (from [rates]) to show a [streamHz] stream on: the stream's own rate, else its
+     * smallest whole multiple (every frame then stays up for the same number of refreshes, so
+     * motion doesn't judder), else the highest. 0 for no stream rate or no rates.
+     */
+    fun panelRateFor(rates: List<Float>, streamHz: Int): Float {
+        if (streamHz <= 0) return 0f
+        rates.firstOrNull { abs(it - streamHz) < 0.5f }?.let { return it }
+        val multiples = rates.filter { rate ->
+            val n = (rate / streamHz).roundToInt()
+            n >= 2 && abs(rate - n * streamHz) < 0.5f
+        }
+        return multiples.minOrNull() ?: rates.maxOrNull() ?: 0f
+    }
+
+    /** The highest rate the panel offers at its current resolution; 0 if unknown. */
+    fun highestRefreshHz(activity: Activity): Float = modesAtCurrentSize(activity).maxOfOrNull { it.refreshRate } ?: 0f
+
+    /** The rate the panel is refreshing at right now (it can change at any time). */
+    fun currentRefreshHz(activity: Activity): Float = display(activity)?.refreshRate ?: 0f
+
+    /** The refresh rate of panel mode [modeId]; 0 for none (0 = no preference). */
+    fun refreshHzOfMode(activity: Activity, modeId: Int): Float =
+        if (modeId == 0) 0f else display(activity)?.supportedModes?.firstOrNull { it.modeId == modeId }?.refreshRate ?: 0f
+
+    private fun modesAtCurrentSize(activity: Activity): List<Display.Mode> {
+        val display = display(activity) ?: return emptyList()
         val current = display.mode
-        return display.supportedModes.firstOrNull {
-            it.physicalWidth == current.physicalWidth && it.physicalHeight == current.physicalHeight &&
-                abs(it.refreshRate - hz) < 0.5f
-        }?.modeId ?: 0
+        return display.supportedModes.filter {
+            it.physicalWidth == current.physicalWidth && it.physicalHeight == current.physicalHeight
+        }
     }
 
     private fun landscapeEven(width: Int, height: Int): Pair<Int, Int> =

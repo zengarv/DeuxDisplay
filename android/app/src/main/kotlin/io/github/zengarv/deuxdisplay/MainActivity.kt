@@ -11,6 +11,7 @@ import android.util.Log
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
@@ -26,6 +27,7 @@ import android.widget.LinearLayout
 import android.widget.Spinner
 import android.widget.Switch
 import android.widget.TextView
+import io.github.zengarv.deuxdisplay.protocol.Config
 import io.github.zengarv.deuxdisplay.protocol.DockAction
 import io.github.zengarv.deuxdisplay.protocol.MediaState
 import io.github.zengarv.deuxdisplay.protocol.Pairing
@@ -40,6 +42,7 @@ import io.github.zengarv.deuxdisplay.stream.StreamModes
 import io.github.zengarv.deuxdisplay.stream.TouchInput
 import io.github.zengarv.deuxdisplay.stream.VideoDecoder
 import io.github.zengarv.deuxdisplay.stream.WifiLink
+import kotlin.math.roundToInt
 
 class MainActivity : Activity(), SurfaceHolder.Callback {
 
@@ -72,6 +75,9 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
     private lateinit var volumeIndicator: VolumeIndicator
     private var dockEnabled = true
     private var mediaState: MediaState? = null // this session's last, null = host has no controls
+
+    // Frame rate of the running stream (CONFIG), which the panel follows when the rate is on Auto.
+    private var streamHz = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -240,11 +246,22 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
             authKey = secrets?.authKey,
             onPaired = ::onPaired,
             onMediaState = ::onMediaState,
+            onConfig = ::onStreamConfig,
             decodeWithoutSurface = noSurface,
             forcedDecoder = decoder,
         ).also {
             it.setOrientation(orientationDegrees(resources.configuration))
             it.start()
+        }
+    }
+
+    /** A session's stream parameters (network thread): keep the panel in step with its rate. */
+    private fun onStreamConfig(config: Config) {
+        val hz = (config.fpsMilliHz / 1000.0).roundToInt()
+        runOnUiThread {
+            if (hz == streamHz) return@runOnUiThread
+            streamHz = hz
+            applyPanelRefresh()
         }
     }
 
@@ -461,11 +478,30 @@ class MainActivity : Activity(), SurfaceHolder.Callback {
         dock.visibility = if (show) View.VISIBLE else View.GONE
     }
 
-    /** Runs the panel at the picked rate too, so frames aren't shown on a mismatched refresh. */
+    /**
+     * Asks for the panel mode at the stream's rate (the picked one, else the host's from CONFIG),
+     * so frames aren't shown on a mismatched refresh. Only a request: some OEM policies still
+     * decide themselves (ColorOS on the Pad Go stays at 60 Hz unless the screen is touched).
+     */
     private fun applyPanelRefresh() {
+        val hz = if (mode.refreshHz != 0) mode.refreshHz else streamHz
         val params = window.attributes
-        params.preferredDisplayModeId = StreamModes.panelModeIdFor(this, mode.refreshHz)
-        window.attributes = params
+        val modeId = StreamModes.panelModeIdFor(this, hz)
+        if (params.preferredDisplayModeId != modeId) {
+            params.preferredDisplayModeId = modeId
+            window.attributes = params
+        }
+        // Also tell the compositor the video's own rate (Android 11+); frame rate votes from
+        // decoder surfaces otherwise don't count, as the panel only sees the app as idle.
+        val surface = surfaceHolder?.surface
+        if (hz > 0 && surface != null && surface.isValid && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                surface.setFrameRate(hz.toFloat(), Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE)
+            } catch (e: IllegalArgumentException) {
+                Log.w(TAG, "setFrameRate($hz) rejected", e)
+            }
+        }
+        Log.i(TAG, "panel: stream $hz Hz -> mode $modeId (${StreamModes.refreshHzOfMode(this, modeId)} Hz)")
     }
 
     private fun loadMode(): StreamMode {

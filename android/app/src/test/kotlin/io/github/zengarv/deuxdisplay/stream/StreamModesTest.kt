@@ -59,6 +59,18 @@ class StreamModesTest {
     }
 
     @Test
+    fun panelRateMatchesTheStream() {
+        val rates = listOf(90.00001f, 60f, 50f, 48f) // Pad Go
+        assertEquals(60f, StreamModes.panelRateFor(rates, 60))
+        assertEquals(90.00001f, StreamModes.panelRateFor(rates, 90))
+        assertEquals(60f, StreamModes.panelRateFor(rates, 30)) // multiple: each frame shown twice
+        assertEquals(48f, StreamModes.panelRateFor(rates, 24))
+        assertEquals(90.00001f, StreamModes.panelRateFor(rates, 144)) // none fits: highest
+        assertEquals(0f, StreamModes.panelRateFor(rates, 0)) // no stream yet: system default
+        assertEquals(0f, StreamModes.panelRateFor(emptyList(), 60))
+    }
+
+    @Test
     fun noPanelModesMeansNoOptions() {
         assertEquals(emptyList<ModeOption>(), StreamModes.options(emptyList()) { _, _ -> true })
     }

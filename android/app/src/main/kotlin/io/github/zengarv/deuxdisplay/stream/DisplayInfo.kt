@@ -15,7 +15,7 @@ object DisplayInfo {
         val metrics = activity.resources.displayMetrics
         var width: Int
         var height: Int
-        val refreshHz: Float
+        var refreshHz: Float
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             val bounds = activity.windowManager.maximumWindowMetrics.bounds
             width = bounds.width()
@@ -32,6 +32,10 @@ object DisplayInfo {
             @Suppress("DEPRECATION")
             refreshHz = display.refreshRate
         }
+
+        // Report the panel's best rate, not the current one: adaptive-refresh panels idle at a
+        // lower rate, and whatever we report is the fastest mode the virtual monitor offers.
+        refreshHz = maxOf(refreshHz, StreamModes.highestRefreshHz(activity))
 
         var xdpi = metrics.xdpi
         var ydpi = metrics.ydpi
