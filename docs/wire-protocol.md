@@ -249,8 +249,8 @@ clients show their dock (and take over the volume keys) only after receiving one
 | 1    | `quality`      | Encoder quality/speed preset, 0 (fastest) – 100; `0xFF` = host decides |
 | 1    | `reserved`     | 0                                                               |
 
-Same meaning as the `HELLO` fields, but mid-session: the host applies them from its next frame,
-without a new `CONFIG` or keyframe. A host that decides the bitrate itself runs it **adaptively**
+Same meaning as the `HELLO` fields, but mid-session, without a new `CONFIG`. The host applies
+them within a fraction of a second, starting with a keyframe. A host that decides the bitrate itself runs it **adaptively**
 (below). Hosts clamp bitrates to 500–500 000 kbit/s.
 
 ### `ENCODER_STATE` (host → client)
@@ -275,7 +275,12 @@ lowest median of the last 20 such seconds (the baseline):
 - above the baseline by more than max(3 ms, 20 %): the link or the decoder is falling behind, so
   cut the bitrate by 25 % (at most every 2 s; no increase for 4 s after);
 - otherwise, if frames used ≥ 60 % of their CBR budget (more bits would show): raise it by
-  10 % (at most every 2 s), or by 2 % once near the bitrate of the last cut.
+  10 %, at most every 10 s, and not to within 10 % of the bitrate of the last cut except for
+  one re-probe a minute.
+
+Hosts may apply a new bitrate or quality by building a new encoder (some hardware encoders ignore
+changes mid-stream), so each change can cost a keyframe; the controller settles instead of
+hunting.
 
 The range is 5–150 Mbit/s over USB and 5–60 Mbit/s over Wi-Fi, starting at 30. Idle desktops
 send nothing, so the bitrate only moves while there is motion to measure it on.

@@ -9,8 +9,10 @@
 #include <atomic>
 #include <array>
 #include <cmath>
+#include <memory>
 #include <mutex>
 #include <thread>
+#include <utility>
 
 #include "capture/DesktopDuplicator.h"
 #include "capture/OutputLocator.h"
@@ -70,7 +72,9 @@ struct Pipeline
     ComPtr<ID3D11Device> device;
     capture::DesktopDuplicator duplicator;
     render::FrameComposer composer;
-    encode::MfH264Encoder encoder;
+    // Replaced whole when the bitrate or quality changes (see EncoderSwap).
+    std::unique_ptr<encode::MfH264Encoder> encoder = std::make_unique<encode::MfH264Encoder>();
+    LUID adapterLuid{};
     RECT desktopRect{}; // where the output sits on the Windows desktop (for touch)
     UINT width = 0; // desktop (virtual monitor) size
     UINT height = 0;
@@ -84,7 +88,7 @@ struct Pipeline
     HRESULT Initialize(const ServeOptions& options, bool preferHevc, unsigned monitorIndex, unsigned bitrateKbps,
                        unsigned quality)
     {
-        encoder.Shutdown();
+        encoder->Shutdown();
         device.Reset();
         const bool found = options.outputName.empty() ? capture::FindVirtualOutput(monitorIndex, output)
                                                       : capture::FindOutputByName(options.outputName, output);
@@ -154,12 +158,13 @@ struct Pipeline
         encode::EncoderSettings settings{streamWidth, streamHeight, fps, bitrateKbps};
         settings.hevc = preferHevc;
         settings.qualityVsSpeed = quality;
-        hr = encoder.Initialize(device.Get(), adapterDesc.AdapterLuid, settings);
+        adapterLuid = adapterDesc.AdapterLuid;
+        hr = encoder->Initialize(device.Get(), adapterDesc.AdapterLuid, settings);
         if (FAILED(hr) && preferHevc)
         {
             Log(L"pipeline: HEVC encoder unavailable (0x%08lX), using H.264", Hr(hr));
             settings.hevc = false;
-            hr = encoder.Initialize(device.Get(), adapterDesc.AdapterLuid, settings);
+            hr = encoder->Initialize(device.Get(), adapterDesc.AdapterLuid, settings);
         }
         if (FAILED(hr))
         {
@@ -168,7 +173,7 @@ struct Pipeline
         hevc = settings.hevc;
         Log(L"pipeline: %s %ux%u@%u -> stream %ux%u %s, rotation %u, encoder \"%s\"", output.deviceName.c_str(),
             width, height, fps, streamWidth, streamHeight, hevc ? L"HEVC" : L"H.264", rotation,
-            encoder.Name().c_str());
+            encoder->Name().c_str());
         return S_OK;
     }
 };
@@ -329,6 +334,71 @@ struct EncoderControl
         std::lock_guard lock(mutex);
         return {kbps, adaptive, static_cast<uint8_t>(quality)};
     }
+};
+
+// Encoders take bitrate and quality only at initialization (Intel's MFT accepts changes through
+// ICodecAPI but ignores them), and creating one takes ~200-350 ms. So a change builds a new
+// encoder on a worker thread while the current one keeps streaming, and the frame loop swaps it
+// in between two frames: the only cost on the stream is the new encoder's first keyframe. The
+// old encoder is shut down on a worker thread too.
+class EncoderSwap
+{
+  public:
+    ~EncoderSwap()
+    {
+        Join(m_builder);
+        Join(m_retirer);
+    }
+
+    bool Busy() const { return m_builder.joinable(); }
+
+    void Build(ComPtr<ID3D11Device> device, LUID luid, encode::EncoderSettings settings)
+    {
+        m_ready = false;
+        m_builder = std::thread([this, device, luid, settings] {
+            m_encoder = std::make_unique<encode::MfH264Encoder>();
+            m_hr = m_encoder->Initialize(device.Get(), luid, settings);
+            m_device = device;
+            m_ready = true;
+        });
+    }
+
+    // The new encoder once built, if it's for `device`; nullptr while building or on failure.
+    std::unique_ptr<encode::MfH264Encoder> TakeReady(ID3D11Device* device, HRESULT& hr)
+    {
+        if (!m_ready)
+        {
+            return nullptr;
+        }
+        Join(m_builder);
+        m_ready = false;
+        hr = m_device.Get() == device ? m_hr : HRESULT_FROM_WIN32(ERROR_DEVICE_REINITIALIZATION_NEEDED);
+        m_device.Reset();
+        auto encoder = std::move(m_encoder);
+        return SUCCEEDED(hr) ? std::move(encoder) : nullptr;
+    }
+
+    void Retire(std::unique_ptr<encode::MfH264Encoder> encoder)
+    {
+        Join(m_retirer);
+        m_retirer = std::thread([old = std::move(encoder)]() mutable { old.reset(); });
+    }
+
+  private:
+    static void Join(std::thread& t)
+    {
+        if (t.joinable())
+        {
+            t.join();
+        }
+    }
+
+    std::thread m_builder;
+    std::thread m_retirer;
+    std::unique_ptr<encode::MfH264Encoder> m_encoder;
+    ComPtr<ID3D11Device> m_device;
+    HRESULT m_hr = S_OK;
+    std::atomic<bool> m_ready{false};
 };
 
 // Frames recently sent, so FRAME_STATS (keyed by capture time) can be matched with their send
@@ -613,12 +683,20 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
     control.quality = qualityFor(hello->encoderQuality);
     encode::AdaptiveBitrate abr(control.kbps, abrLimits);
     SentFrames sentFrames;
+    EncoderSwap encoderSwap;
     unsigned appliedKbps = control.kbps;
     unsigned appliedQuality = control.quality;
     Log(L"session: bitrate %s%.1f Mbit/s, quality %u", control.adaptive ? L"adaptive from " : L"",
         appliedKbps / 1000.0, appliedQuality);
+    // What the encoder runs at now (the wanted values may still be on their way in).
     const auto sendEncoderState = [&] {
-        return conn.Send(MessageType::EncoderState, 0, NowMicros(), protocol::SerializeEncoderState(control.State()));
+        bool adaptive = false;
+        {
+            std::lock_guard lock(control.mutex);
+            adaptive = control.adaptive;
+        }
+        const protocol::EncoderState state{appliedKbps, adaptive, static_cast<uint8_t>(appliedQuality)};
+        return conn.Send(MessageType::EncoderState, 0, NowMicros(), protocol::SerializeEncoderState(state));
     };
 
     Pipeline pipeline;
@@ -807,7 +885,7 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
         if (frame.timestampUs == times.present)
         {
             const uint64_t sentUs = NowMicros();
-            stats.Add(split.frame.size(), times, sentUs, pipeline.encoder.LastTiming());
+            stats.Add(split.frame.size(), times, sentUs, pipeline.encoder->LastTiming());
             sentFrames.Add({frame.timestampUs, sentUs, static_cast<uint32_t>(split.frame.size()),
                             appliedKbps * 1000 / 8 / std::max(1u, pipeline.fps)});
         }
@@ -828,30 +906,43 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
             sleeper.SleepMicros(nextFrameUs - nowUs);
         }
 
-        // A new bitrate/quality from the user or the adaptive controller: applies from the next frame.
-        if (control.changed.exchange(false))
+        // A new bitrate/quality from the user or the adaptive controller: build an encoder for it
+        // off the frame path, then swap it in here (see EncoderSwap).
+        if (!encoderSwap.Busy() && control.changed.exchange(false))
         {
             const auto want = control.State();
-            if (want.bitrateKbps != appliedKbps)
+            if (want.bitrateKbps != appliedKbps || want.quality != appliedQuality)
             {
-                if (const HRESULT set = pipeline.encoder.SetBitrate(want.bitrateKbps); FAILED(set))
-                {
-                    Log(L"encoder: changing the bitrate mid-stream failed 0x%08lX", Hr(set));
-                }
-                appliedKbps = want.bitrateKbps;
+                auto settings = pipeline.encoder->Settings();
+                settings.bitrateKbps = want.bitrateKbps;
+                settings.qualityVsSpeed = want.quality;
+                encoderSwap.Build(pipeline.device, pipeline.adapterLuid, settings);
             }
-            if (want.quality != appliedQuality)
+            else if (!sendEncoderState())
             {
-                if (const HRESULT set = pipeline.encoder.SetQualityVsSpeed(want.quality); FAILED(set))
-                {
-                    Log(L"encoder: changing quality mid-stream failed 0x%08lX", Hr(set));
-                }
-                appliedQuality = want.quality;
+                break;
             }
+        }
+        HRESULT swapped = S_OK;
+        if (auto encoder = encoderSwap.TakeReady(pipeline.device.Get(), swapped))
+        {
+            const auto& settings = encoder->Settings();
+            Log(L"encoder: now %.1f Mbit/s, quality %u", settings.bitrateKbps / 1000.0, settings.qualityVsSpeed);
+            appliedKbps = settings.bitrateKbps;
+            appliedQuality = settings.qualityVsSpeed;
+            encoderSwap.Retire(std::exchange(pipeline.encoder, std::move(encoder)));
+            lastCodecConfig.clear();
+            keyframeRequested = true; // on a static desktop, show the new settings right away
+            control.changed = true;   // pick up anything that changed while building
             if (!sendEncoderState())
             {
                 break;
             }
+        }
+        else if (FAILED(swapped))
+        {
+            Log(L"encoder: rebuilding for new settings failed 0x%08lX, keeping the current one", Hr(swapped));
+            control.changed = true; // e.g. the pipeline was rebuilt meanwhile: retry on the new device
         }
 
         // The tablet turned: rotate the Windows display to match (like a pivoting monitor).
@@ -864,13 +955,13 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
 
         if (keyframeRequested.exchange(false))
         {
-            pipeline.encoder.RequestKeyframe();
+            pipeline.encoder->RequestKeyframe();
             if (haveFrame)
             {
                 // Static desktop: nothing new will arrive, so re-encode the last image now.
                 ComPtr<ID3D11Texture2D> nv12;
                 if (SUCCEEDED(pipeline.composer.ConvertLast(&nv12)) &&
-                    SUCCEEDED(pipeline.encoder.Encode(nv12.Get(), NowMicros(), encoded)))
+                    SUCCEEDED(pipeline.encoder->Encode(nv12.Get(), NowMicros(), encoded)))
                 {
                     for (const auto& f : encoded)
                     {
@@ -942,7 +1033,7 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
         haveFrame = true;
 
         times.encodeStart = NowMicros();
-        hr = pipeline.encoder.Encode(nv12.Get(), times.present, encoded);
+        hr = pipeline.encoder->Encode(nv12.Get(), times.present, encoded);
         times.encoded = NowMicros();
         if (FAILED(hr))
         {
@@ -962,7 +1053,7 @@ void RunSession(transport::Connection& conn, Transport transport, const PairingC
         {
             // Same image again: encodes to a tiny all-skip frame that pushes the real one out of
             // "one frame behind" decoders right away (see REPEAT in docs/wire-protocol.md).
-            if (SUCCEEDED(pipeline.encoder.Encode(nv12.Get(), times.present + 1, encoded)))
+            if (SUCCEEDED(pipeline.encoder->Encode(nv12.Get(), times.present + 1, encoded)))
             {
                 for (const auto& f : encoded)
                 {

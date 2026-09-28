@@ -165,6 +165,14 @@ HEVC MFT, dragging windows (15–35 fps of real frames).
   resolution; the decoder is.
 - The panel stays at 60 Hz unless touched, whatever the app requests (ColorOS policy; the app's
   90 Hz vote reaches SurfaceFlinger). See the debug stats overlay's warnings.
+- **Correction:** the two bitrate bullets above are invalid. Intel's HEVC MFT accepts
+  `CODECAPI_AVEncCommonMeanBitRate`/`QualityVsSpeed` mid-stream (S_OK) but ignores them (max
+  bitrate and HRD buffer size return S_FALSE; a forced keyframe doesn't help either), so the
+  encoder stayed at its initial 30 Mbit/s throughout: the "climb" was the target only. Only a
+  new encoder applies them (~190–330 ms to create), so the host now builds one on a worker thread
+  and swaps it in between frames. A probe client asking 10 → 60 Mbit/s mid-stream then got
+  ~50 Mbit/s, with no frame gap beyond the no-change baseline. Quality 100 set at connect
+  measured ~25 ms encode vs ~12 at 0 (2408×1720, bursty).
 
 ### Decoder operating rate and USB tethering (2026-09-28)
 

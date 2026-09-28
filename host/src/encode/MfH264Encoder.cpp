@@ -124,6 +124,7 @@ bool MfH264Encoder::WaitFor(int& counter, DWORD timeoutMs)
 HRESULT MfH264Encoder::Initialize(ID3D11Device* device, LUID adapterLuid, const EncoderSettings& settings)
 {
     Shutdown();
+    m_settings = settings;
     m_fps = settings.fps;
 
     HRESULT hr = MFStartup(MF_VERSION, MFSTARTUP_LITE);
@@ -269,16 +270,6 @@ HRESULT MfH264Encoder::ConfigureCodecApi(const EncoderSettings& settings)
         }
     }
     return S_OK;
-}
-
-HRESULT MfH264Encoder::SetBitrate(UINT kbps)
-{
-    return m_codecApi ? SetUint(m_codecApi.Get(), CODECAPI_AVEncCommonMeanBitRate, kbps * 1000) : E_NOT_VALID_STATE;
-}
-
-HRESULT MfH264Encoder::SetQualityVsSpeed(UINT quality)
-{
-    return m_codecApi ? SetUint(m_codecApi.Get(), CODECAPI_AVEncCommonQualityVsSpeed, quality) : E_NOT_VALID_STATE;
 }
 
 HRESULT MfH264Encoder::SetMediaTypes(const EncoderSettings& settings)

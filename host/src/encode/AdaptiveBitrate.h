@@ -16,6 +16,11 @@ namespace dd::encode
 // would look better with more bits) and delivery stays at the baseline; it cuts it back as soon
 // as delivery rises above it (the link or the decoder is falling behind). Idle desktops send
 // nothing, so the bitrate only moves while there's motion to measure it on.
+//
+// Every change costs a new encoder and a keyframe (see EncoderSwap in Server.cpp), so it settles
+// rather than hunting: at most one increase per 10 s, none within 10 % of the last bitrate where
+// delivery rose, and a re-probe past that ceiling after a minute, backing off to 8 minutes while
+// re-probes keep failing.
 class AdaptiveBitrate
 {
   public:
@@ -54,7 +59,10 @@ class AdaptiveBitrate
     static constexpr double kBusyUtilization = 0.6;  // frames use this much of the budget: bits help
     static constexpr uint64_t kDrainUs = 2'000'000;             // no second cut before this
     static constexpr uint64_t kHoldAfterDecreaseUs = 4'000'000; // no increase before this
-    static constexpr uint64_t kHoldAfterIncreaseUs = 2'000'000;
+    static constexpr uint64_t kHoldAfterIncreaseUs = 10'000'000;
+    static constexpr uint64_t kReprobeMinUs = 60'000'000;
+    static constexpr uint64_t kReprobeMaxUs = 480'000'000;
+    static constexpr uint64_t kReprobeFailedWithinUs = 30'000'000; // a cut this soon after: failed
 
   private:
     bool Evaluate(uint64_t nowUs);
@@ -69,7 +77,10 @@ class AdaptiveBitrate
     std::deque<uint64_t> m_medians; // recent window medians, newest last
     uint64_t m_increaseAfterUs = 0;
     uint64_t m_decreaseAfterUs = 0;
-    unsigned m_ceilingKbps = 0; // where delivery last rose; probe gently near and past it
+    unsigned m_ceilingKbps = 0; // where delivery last rose; stay under it, re-probe rarely
+    uint64_t m_ceilingUs = 0;
+    uint64_t m_reprobeAfterUs = kReprobeMinUs; // since the ceiling was set
+    uint64_t m_reprobeUs = 0;                   // when the last re-probe started, 0 = none
     Window m_last;
 };
 

@@ -27,7 +27,7 @@ void ClimbsToMaxWhileDeliveryIsFlat()
 {
     AdaptiveBitrate abr(30'000, {5'000, 100'000});
     uint64_t now = 1'000'000;
-    Run(abr, now, 60, [](unsigned) { return 20'000; });
+    Run(abr, now, 180, [](unsigned) { return 20'000; });
     CHECK(abr.TargetKbps() == 100'000);
 }
 
@@ -58,19 +58,24 @@ void SettlesBelowWhereDeliverySlowsDown()
     uint64_t now = 1'000'000;
     Run(abr, now, 120, delivery);
     CHECK(abr.TargetKbps() <= 64'000);
-    CHECK(abr.TargetKbps() >= 45'000);
+    CHECK(abr.TargetKbps() >= 40'000);
 
-    // It stays in that band rather than oscillating out of it.
+    // Then it settles: over five minutes it changes only for re-probes, which back off as they
+    // keep failing (1, 2, 4 minutes apart), never hunting every few seconds, and stays in band.
     unsigned lowest = abr.TargetKbps();
     unsigned highest = abr.TargetKbps();
-    for (int i = 0; i < 60; ++i)
+    unsigned changes = 0;
+    for (int i = 0; i < 300; ++i)
     {
+        const unsigned before = abr.TargetKbps();
         Run(abr, now, 1, delivery);
+        changes += abr.TargetKbps() != before;
         lowest = std::min(lowest, abr.TargetKbps());
         highest = std::max(highest, abr.TargetKbps());
     }
-    CHECK(lowest >= 45'000);
-    CHECK(highest <= 66'000); // re-probes in small steps, just past where delivery slows
+    CHECK(changes <= 12);
+    CHECK(lowest >= 40'000);
+    CHECK(highest <= 72'000);
 }
 
 void BacksOffWhenDeliverySuddenlyRises()

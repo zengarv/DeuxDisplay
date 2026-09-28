@@ -76,7 +76,12 @@ bool AdaptiveBitrate::Evaluate(uint64_t nowUs)
         {
             return false; // just cut; give queued frames time to drain before judging again
         }
+        // A re-probe that ran straight into the ceiling again: wait longer before the next.
+        const bool failedReprobe = m_reprobeUs && nowUs - m_reprobeUs < kReprobeFailedWithinUs;
+        m_reprobeAfterUs = failedReprobe ? std::min(m_reprobeAfterUs * 2, kReprobeMaxUs) : kReprobeMinUs;
+        m_reprobeUs = 0;
         m_ceilingKbps = before;
+        m_ceilingUs = nowUs;
         m_targetKbps = Clamp(uint64_t{before} * 3 / 4);
         m_decreaseAfterUs = nowUs + kDrainUs;
         m_increaseAfterUs = nowUs + kHoldAfterDecreaseUs;
@@ -84,14 +89,20 @@ bool AdaptiveBitrate::Evaluate(uint64_t nowUs)
     else if (nowUs >= m_increaseAfterUs && utilization >= kBusyUtilization)
     {
         // Delivery is flat and the encoder spends its budget: more bits would show. Step up by
-        // 10 %, or by 2 % once close to where delivery rose last time (still climbing past it if
-        // things got better, but without big overshoots).
-        uint64_t step = std::max<uint64_t>(2'000, before / 10);
-        if (m_ceilingKbps && before + step > m_ceilingKbps * 9ull / 10)
+        // 10 %, but not into the band just under where delivery rose last time; once a minute,
+        // try past it in case things got better.
+        const uint64_t next = std::max<uint64_t>(uint64_t{before} + 2'000, uint64_t{before} * 11 / 10);
+        const bool nearCeiling = m_ceilingKbps && next > m_ceilingKbps * 9ull / 10;
+        if (nearCeiling && nowUs - m_ceilingUs < m_reprobeAfterUs)
         {
-            step = std::max<uint64_t>(1'000, before / 50);
+            return false;
         }
-        m_targetKbps = Clamp(before + step);
+        if (nearCeiling)
+        {
+            m_ceilingKbps = 0; // re-probe: a cut will set it again if nothing changed
+            m_reprobeUs = nowUs;
+        }
+        m_targetKbps = Clamp(next);
         m_increaseAfterUs = nowUs + kHoldAfterIncreaseUs;
     }
     return m_targetKbps != before;

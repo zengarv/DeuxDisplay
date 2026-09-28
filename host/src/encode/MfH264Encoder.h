@@ -57,15 +57,13 @@ class MfH264Encoder
 
     void RequestKeyframe() { m_forceKeyframe = true; }
 
-    // Mid-stream changes, applied from the next frame on (CBR target, quality/speed preset).
-    // Fail if this encoder only takes them at initialization.
-    HRESULT SetBitrate(UINT kbps);
-    HRESULT SetQualityVsSpeed(UINT quality);
-
     // Submits one NV12 frame and collects whatever output is ready (normally exactly this frame).
     HRESULT Encode(ID3D11Texture2D* nv12, uint64_t timestampUs, std::vector<EncodedFrame>& out);
 
     const std::wstring& Name() const { return m_name; }
+    // What it was initialized with. Bitrate and quality are fixed for an encoder's lifetime:
+    // hardware MFTs may accept changes through ICodecAPI yet ignore them (Intel's does).
+    const EncoderSettings& Settings() const { return m_settings; }
     const EncoderTiming& LastTiming() const { return m_timing; }
 
   private:
@@ -82,6 +80,7 @@ class MfH264Encoder
     Microsoft::WRL::ComPtr<IMFDXGIDeviceManager> m_deviceManager;
     Microsoft::WRL::ComPtr<EventPump> m_pump;
     std::wstring m_name;
+    EncoderSettings m_settings;
     UINT m_fps = 60;
     EncoderTiming m_timing;
     bool m_forceKeyframe = true;
