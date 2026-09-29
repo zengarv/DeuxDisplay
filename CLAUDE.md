@@ -8,7 +8,7 @@ Three parts, one repo:
 
 - `driver/` — IddCx virtual monitor driver (C++, UMDF 2, WDK via NuGet). **MS-PL** (derived from
   Microsoft's sample), unlike the rest of the repo (MIT). `Edid.h` is original MIT code.
-- `host/` — `DeuxDisplayHost.exe`: Desktop Duplication → Media Foundation H.264 → loopback TCP (C++20)
+- `host/` — `DeuxDisplayHost.exe`: Desktop Duplication → Media Foundation H.264/HEVC/VP9 → TCP over the USB tunnel or Wi-Fi (C++20)
 - `android/` — Kotlin client: TCP → MediaCodec → SurfaceView
 
 `docs/wire-protocol.md` is the source of truth for the protocol. Host (`host/src/protocol/`) and

@@ -1,21 +1,22 @@
 # Architecture
 
-DeuxDisplay turns an Android device into an extended (not mirrored) Windows 11 display over
-a wired USB connection, optimised for end-to-end latency.
+DeuxDisplay turns Android devices into extended (not mirrored) Windows 11 displays over USB or
+a direct Wi-Fi link, optimised for end-to-end latency.
 
 ```
  Windows 11 PC                                                Android tablet
 ┌──────────────────────────────────────────────┐            ┌──────────────────────────────┐
 │ DeuxDisplayIdd (IddCx virtual monitor, UMDF) │            │ DeuxDisplay app (Kotlin)     │
-│   └─ appears in Display Settings with the    │            │                              │
-│      tablet's native EDID mode               │            │  TCP client ──► demux        │
+│   └─ one monitor per device, offering every  │            │                              │
+│      size and rate the device can show       │            │  TCP client ──► demux        │
 │                  │ desktop composition       │            │                   │          │
-│                  ▼                           │            │                   ▼          │
-│ DeuxDisplayHost.exe (C++)                    │  USB-C     │  MediaCodec (HW AVC decoder, │
-│   capture: DXGI Desktop Duplication  ────────┼── adb ─────┼─►  low-latency mode)         │
-│   encode:  Media Foundation HW MFT (H.264)   │  reverse   │                   │          │
-│   transport: TCP 127.0.0.1 (TCP_NODELAY)     │  tunnel    │                   ▼          │
-│                                              │            │  SurfaceView (direct render) │
+│                  ▼                           │  USB:      │                   ▼          │
+│ DeuxDisplayHost.exe (C++)                    │  adb       │  MediaCodec (HW H.264/HEVC/  │
+│   capture: DXGI Desktop Duplication  ────────┼─ reverse ──┼─►  VP9, low-latency keys)    │
+│   encode:  Media Foundation HW MFT           │  tunnel    │                   │          │
+│            (H.264/HEVC/VP9, adaptive bitrate)│            │                   ▼          │
+│   transport: TCP, TCP_NODELAY                │  Wi-Fi:    │  SurfaceView (direct render) │
+│   input: touch, dock shortcuts, PC volume    │  PC's AP   │  touch · dock · volume keys  │
 └──────────────────────────────────────────────┘            └──────────────────────────────┘
 ```
 
@@ -25,8 +26,8 @@ a wired USB connection, optimised for end-to-end latency.
 An Indirect Display Driver built on IddCx (user-mode, UMDF 2), derived from Microsoft's IddCx
 sample, which is **MS-PL** licensed, so `driver/` is MS-PL (see
 [`driver/THIRD_PARTY_NOTICES.md`](../driver/THIRD_PARTY_NOTICES.md)). It creates one virtual
-monitor per connected client (up to four), each with an EDID/mode list describing that device
-(e.g. OnePlus Pad Go: 2408×1720, 60/90 Hz).
+monitor per connected client (up to four), each with an EDID and a mode list describing that
+device (e.g. OnePlus Pad Go: 2408×1720 plus scaled sizes, at 90/60/50/48/30 Hz).
 Windows composes the extended desktop onto it like any real monitor. The driver's swap-chain
 processor simply drains frames; the host captures them through Desktop Duplication.
 
@@ -37,9 +38,11 @@ adapter always exists but with no monitor attached. (Early versions used a softw
 Windows didn't restore after a reboot; `--install-device` replaces it.) At runtime the host (a normal user) opens the
 driver's device interface (`driver/DeuxDisplayIdd/Public.h`) and sends:
 
-- `PLUG` with the client's resolution, refresh rates and physical size (from `HELLO`). The driver
-  generates a matching EDID and mode list and reports monitor arrival, so any tablet gets a
-  correctly sized, correctly scaled monitor.
+- `PLUG` with the preferred mode, the full mode list and the physical size (from `HELLO`). The
+  request (version 2) lists up to 32 modes: every stream size the client can show × every frame
+  rate. The driver builds an EDID from the preferred timing, offers exactly the listed modes to
+  Windows, and reports monitor arrival, so any tablet gets a correctly sized, correctly scaled
+  monitor. Host and driver must be the same version.
 - `UNPLUG` when the client disconnects. If the host dies, closing its handle triggers the
   driver's file-cleanup callback, which unplugs the monitor, so a crash never strands a phantom
   display.
@@ -51,6 +54,13 @@ returns it from `PLUG`. The EDID product code is index + 1, so Windows names the
 `MONITOR\DXD0001`, `DXD0002`, …, and the host finds each session's output by that hardware ID.
 A lone client always gets index 0, the same monitor identity (and remembered arrangement) as
 before multi-display support. A host that doesn't ask for the index still works, on index 0.
+
+**Modes switch in place.** Because the monitor offers every mode up front, changing resolution
+or refresh rate never replugs it. The user can pick a mode in Windows' *Settings > Display*, or
+the app sends `DISPLAY_MODE` and the host calls `ChangeDisplaySettingsEx` on the monitor. Either
+way Desktop Duplication reports `ACCESS_LOST`, the host rebuilds capture and encoder for the new
+mode (~0.5 s) and sends `CONFIG`. After plugging, the host also sets the app's picked mode, since
+Windows otherwise restores the mode it last used for that monitor.
 
 Windows sometimes attaches a new monitor in *duplicate* mode. The host detects that and applies
 the "extend" topology (the same as Win+P → Extend), which needs no admin rights.
@@ -65,10 +75,39 @@ Native C++20, no third-party dependencies beyond the Windows SDK.
 - **capture/** — `IDXGIOutputDuplication` bound to the virtual display's `IDXGIOutput`
   (matched by device name), never "the primary display". Handles `DXGI_ERROR_ACCESS_LOST`
   (lock screen, UAC, mode change, GPU reset) by recreating the duplication.
-- **encode/** — Media Foundation hardware H.264 MFT (`MFTEnumEx` with
+- **render/** — draws the cursor, scales, and converts BGRA to NV12 with the GPU's video
+  processor, in limited (16–235) or full (0–255) BT.709 range.
+- **encode/** — Media Foundation hardware MFTs for H.264, HEVC and VP9 (`MFTEnumEx` with
   `MFT_ENUM_FLAG_HARDWARE`, so NVENC / Quick Sync / AMF are all reached through one path),
-  `CODECAPI_AVLowLatencyMode`, no B-frames, low-delay rate control. Frames stay on the GPU
-  (DXGI device manager) where possible.
+  `CODECAPI_AVLowLatencyMode`, no B-frames, CBR, one reference frame. Frames stay on the GPU
+  (DXGI device manager). VP9 is profile 0 (4:2:0): Intel's VP9 MFT takes only NV12 input. It
+  also ignores the configured colour range, so for full range the host sets the keyframe
+  header's `color_range` bit itself (`Vp9Header.h`).
+  - **Encoder swap.** Hardware MFTs may accept bitrate and quality changes through `ICodecAPI`
+    and silently ignore them (Intel's does). So any change builds a new encoder on a worker
+    thread (~200–350 ms) while the current one keeps streaming, and the frame loop swaps it in
+    between two frames. The new encoder starts with a keyframe; the old one shuts down on a
+    worker thread too.
+  - **Adaptive bitrate** (`AdaptiveBitrate.cpp`, unit-tested). Fed from `FRAME_STATS` on the
+    session's reader thread: *delivery* is host send → decoded on the client, the part of the
+    latency the bitrate drives. It raises the bitrate while frames use most of their budget and
+    delivery stays at its recent best, cuts it when delivery rises, and settles instead of
+    hunting, since every change costs an encoder and a keyframe. It relearns its baseline
+    whenever the stream is rebuilt (new mode, rotation). Rules are in
+    [wire-protocol.md](wire-protocol.md#adaptive-bitrate).
+- **Sharp refresh** (in the session loop). When enabled and the screen has been still for
+  120 ms, the last image is encoded three more times and sent as `REPEAT` frames: each pass
+  codes the difference to the encoder's own lossy copy, restoring detail the frame budget
+  dropped. The frame wait is shortened only while a pass is due.
+- **display/** — plugs and unplugs through the driver, forces the *extend* topology, sets the
+  monitor's mode (`SetDisplayMode`) and orientation (`SetDisplayOrientation`), and builds the
+  mode list (`ModeList.h`, unit-tested).
+- **input/** — `TouchTracker` turns `INPUT` frames into Windows touch injection on the
+  session's monitor; `Shortcuts` sends the dock's keys (undo, redo, Task view, play/pause) to the
+  active window.
+- **media/** — `MediaControls` changes the default playback device's volume directly (no key
+  press, so no Windows flyout), watches the media session the play/pause key controls, and sends
+  `MEDIA_STATE` when either changes.
 - **transport/** — TCP listeners on 127.0.0.1 (USB) and on the host's own access point
   (Wi-Fi), `TCP_NODELAY`, header+payload in one send.
 - **adb/** — follows the adb server's `host:track-devices` stream (smart-socket protocol on
@@ -91,14 +130,36 @@ sessions are told apart by connection, not by port. Log lines carry a session ta
 sessions use separate pointer-ID ranges and each injected frame repeats the other sessions'
 fingers that are still down.
 
+Each session thread runs the frame loop and a reader thread. The reader handles client messages
+(touch, dock actions, settings, `FRAME_STATS`) and feeds the adaptive bitrate controller; the
+frame loop owns capture, conversion and the encoder, and applies whatever the reader decided
+(`EncoderControl`), since the encoder isn't thread-safe.
+
 ### Android client — `android/`
-Kotlin, minSdk 26, targets API 35. A single full-screen, orientation-locked activity with a
-`SurfaceView`. `MediaCodec` in async mode decodes straight to that surface.
-`KEY_LOW_LATENCY` is only set when the decoder advertises `FEATURE_LowLatency`, and
-configuration falls back to a plain config if the vendor codec rejects low-latency keys.
+Kotlin, minSdk 26, targets API 35. A single full-screen activity with a `SurfaceView` that
+`MediaCodec` decodes straight to, releasing each frame the moment it's decoded (no pacing).
+
+- **Decoder** (`VideoDecoder.kt`): the hardware decoder for the stream's codec, configured with
+  `KEY_LOW_LATENCY`, `KEY_PRIORITY` = realtime, `KEY_OPERATING_RATE` = maximum (decoders clock
+  themselves from it; ~4.5 ms faster on the reference tablet) and MediaTek's low-latency and
+  no-post-processing hints. If configure rejects the format, only the least important key left is
+  dropped per retry. The decoder is also told the stream's colour range, standard and transfer.
+  Render timestamps from decoders that report them on another clock are replaced with the
+  callback's arrival time.
+- **Panel refresh**: the app asks for the panel mode matching the stream's rate (or its smallest
+  multiple) and sets it as the surface's frame rate on Android 11+. It's a request: some OEM
+  policies override it.
+- **Settings** (`MainActivity.kt`): Display, Stream quality, Connection and App sections. Mode
+  changes go to the host as `DISPLAY_MODE`, encoder options as `ENCODER_SETTINGS`, both applied
+  live; codec and connection changes reconnect. Mode changes made on the PC are adopted.
+- **Dock and volume keys** (`DockView.kt`, `VolumeIndicator.kt`): shortcut buttons sent as
+  `ACTION`, and the volume keys redirected to the PC while streaming. Both appear only once the
+  host sends `MEDIA_STATE`.
+- **Debug stats** (`StreamStats.kt`, `StatsOverlay.kt`): counters kept only while the overlay is
+  shown, read twice a second.
 
 ### Transport
-The host serves two transports at once; the app picks one (settings panel > Connection).
+The host serves two transports at once; the app picks one (settings panel > Connection > Link).
 
 **USB.** `adb reverse tcp:<port> tcp:<port>` lets the tablet connect to `127.0.0.1:<port>` and
 reach the host listener over USB. This needs nothing beyond USB debugging, and it is the same
@@ -164,9 +225,11 @@ bypass our encoder and input path. See [latency-notes.md](latency-notes.md#wi-fi
 
 - `scripts/run.ps1` installs and launches the app on one ADB device (`-Serial` when several are
   attached); the host itself serves every attached device.
-- Up to four virtual displays (one per client), each in one fixed landscape mode, SDR only.
-- No audio. Input passthrough (M5) covers touch only: `INPUT` touch frames are injected with
-  Windows touch injection on the virtual display; pen is not forwarded yet.
+- Up to four virtual displays (one per client), up to 32 modes each, SDR 8-bit 4:2:0 only.
+  Rotation follows the tablet (frames stay landscape on the wire).
+- No audio streaming (the dock and volume keys control the PC's own audio). Input covers touch
+  and the dock's shortcuts: `INPUT` touch frames are injected with Windows touch injection on
+  the virtual display; pen is not forwarded yet.
 - The cursor is composited into the video frame. A separate cursor channel (`CURSOR` message)
   is reserved for later if cursor latency needs to be decoupled from video.
 
@@ -179,6 +242,9 @@ bypass our encoder and input path. See [latency-notes.md](latency-notes.md#wi-fi
 | USB mode switched / adb server restarted | Same as unplug + plug: display back in ~1 s |
 | Host crashes / is killed      | Driver unplugs the monitor when the host's handle closes       |
 | Windows lock / UAC / mode set | Duplication recreated; client gets a fresh keyframe            |
+| Mode changed (app or Windows) | Pipeline rebuilt for the new mode, `CONFIG` sent, decoder reset (~0.5 s) |
+| Bitrate / quality changed     | New encoder built in the background, swapped in with a keyframe |
+| Full range toggled            | Pipeline rebuilt like a mode change                            |
 | Decoder error on client       | Client resets decoder and sends `REQUEST_KEYFRAME`             |
 | Virtual display disabled      | Host waits for the output to reappear                          |
 
@@ -190,8 +256,14 @@ bypass our encoder and input path. See [latency-notes.md](latency-notes.md#wi-fi
   builds tend to pull in GPL/non-free flags that conflict with an MIT release.
 - **Test-signing mode**: unnecessary for a UMDF driver, and usually blocked by Secure Boot.
 - **C#/.NET host**: GC pauses in the per-frame hot loop and a second debugging model.
-- **HEVC**: USB bandwidth isn't the constraint, and low-latency AVC decode is more uniformly
-  supported on Android.
+- **H.264 only**: the first versions used it everywhere. HEVC is now preferred when the client
+  can decode it (sharper text per bit), and VP9 is offered too, but on the reference tablet HEVC
+  is the fastest to decode.
+- **Changing bitrate through `ICodecAPI` mid-stream**: tried first; Intel's MFT returns success
+  and ignores it. Hence the encoder swap.
+- **4:4:4 colour** (no colour fringing on text): the tablet's decoders support only 4:2:0 for
+  H.264 and HEVC. Its VP9 decoder advertises 4:4:4 (profile 1), but Windows' VP9 MFT only takes
+  4:2:0 input; Intel's oneVPL SDK could do it, at the cost of a non-Windows-SDK dependency.
 - **Reading frames directly inside the IDD swap-chain processor** (skipping Desktop
   Duplication): potentially one fewer copy, but it needs cross-process texture sharing out of
   WUDFHost. Worth revisiting in M4 if capture shows up in the latency budget.
